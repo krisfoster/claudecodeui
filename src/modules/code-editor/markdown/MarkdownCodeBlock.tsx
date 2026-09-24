@@ -6,6 +6,7 @@ import { copyTextToClipboard } from '@/shared/utils';
 import { SyntaxHighlighter } from '@/shared/syntaxHighlighter';
 import { useTheme } from '@/shared/context/ThemeContext';
 import MermaidDiagram from '@/modules/code-editor/markdown/MermaidDiagram';
+import VegaLiteChart from '@/modules/code-editor/markdown/VegaLiteChart';
 
 type MarkdownCodeBlockProps = {
   inline?: boolean;
@@ -42,6 +43,10 @@ export default function MarkdownCodeBlock({
 
   if (language === 'mermaid') {
     return <MermaidDiagram code={rawContent} />;
+  }
+
+  if (language === 'vega-lite') {
+    return <VegaLiteChart spec={rawContent} />;
   }
 
   return (

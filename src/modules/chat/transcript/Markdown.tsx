@@ -7,9 +7,10 @@ import rehypeKatex from 'rehype-katex';
 import { oneDark, oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { useTranslation } from 'react-i18next';
 
-import { MermaidDiagram } from '@/modules/code-editor';
+import { MermaidDiagram, VegaLiteChart } from '@/modules/code-editor';
 import { MarkdownImage } from '@/modules/chat/transcript/MarkdownImage';
-import { normalizeInlineCodeFences } from '@/modules/chat/utils/chatFormatting';
+import { RichTable } from '@/modules/chat/transcript/RichTable';
+import { childrenToText, normalizeInlineCodeFences } from '@/modules/chat/utils/chatFormatting';
 import { copyTextToClipboard } from '@/shared/utils';
 import { SyntaxHighlighter } from '@/shared/syntaxHighlighter';
 import { usePaletteOps } from '@/modules/command-palette';
@@ -49,21 +50,6 @@ const looksLikeFilePath = (value?: string): value is string => {
     return false;
   }
   return /[\\/]/.test(cleaned) || /\.[a-z0-9]+$/i.test(cleaned);
-};
-
-// Extract plain text from link children so a reference rendered only as link
-// text (e.g. `[src/foo.ts]()` with an empty href) can still be opened.
-const childrenToText = (children: React.ReactNode): string => {
-  if (typeof children === 'string' || typeof children === 'number') {
-    return String(children);
-  }
-  if (Array.isArray(children)) {
-    return children.map(childrenToText).join('');
-  }
-  if (React.isValidElement(children)) {
-    return childrenToText((children.props as { children?: React.ReactNode }).children);
-  }
-  return '';
 };
 
 // The delimiters `remark-math` recognizes with `singleDollarTextMath` off.
@@ -108,6 +94,10 @@ const CodeBlock = ({ node: _node, className, children, forceBlock, ...props }: C
 
   if (language === 'mermaid') {
     return <MermaidDiagram code={raw} />;
+  }
+
+  if (language === 'vega-lite') {
+    return <VegaLiteChart spec={raw} />;
   }
 
   return (
@@ -232,12 +222,7 @@ const markdownComponents = {
     <ol className="mb-2 list-outside list-decimal space-y-1 pl-5 marker:text-current last:mb-0">{children}</ol>
   ),
   li: ({ children }: { children?: React.ReactNode }) => <li className="[&>div:last-child]:mb-0 [&>div]:mb-1">{children}</li>,
-  table: ({ children }: { children?: React.ReactNode }) => (
-    <div className="my-3 overflow-x-auto rounded-lg border border-border">
-      {/* my-0 cancels Tailwind Typography's table margin, which would show as blank bands inside the border */}
-      <table className="my-0 min-w-full border-collapse text-sm">{children}</table>
-    </div>
-  ),
+  table: RichTable,
   thead: ({ children }: { children?: React.ReactNode }) => <thead className="bg-muted/60">{children}</thead>,
   tr: ({ children }: { children?: React.ReactNode }) => (
     <tr className="[&:last-child>td]:border-b-0">{children}</tr>
