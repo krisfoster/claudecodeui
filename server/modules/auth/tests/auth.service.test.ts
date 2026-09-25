@@ -53,7 +53,69 @@ test('register hashes credentials and commits through injected dependencies', as
   const result = await service.register('alice', 'secret12');
 
   assert.equal(result.token, 'signed-token');
-  assert.deepEqual(operations, ['begin', 'hash:secret12', 'create:alice:hash', 'commit', 'login:1']);
+  // Hashing happens before begin() so nothing is ever awaited while the
+  // transaction is open — see the comment in auth.service.ts.
+  assert.deepEqual(operations, ['hash:secret12', 'begin', 'create:alice:hash', 'commit', 'login:1']);
+});
+
+test('register still returns success when the post-commit last-login write fails', async () => {
+  const operations: string[] = [];
+  const service = createAuthService(createDependencies({
+    transaction: {
+      begin: () => operations.push('begin'),
+      commit: () => operations.push('commit'),
+      rollback: () => operations.push('rollback'),
+    },
+    users: {
+      hasUsers: () => false,
+      createUser: (username, passwordHash) => ({ id: 1, username, password_hash: passwordHash }),
+      getUserByUsername: () => undefined,
+      updateLastLogin: () => {
+        throw new Error('disk full');
+      },
+    },
+  }));
+
+  const result = await service.register('alice', 'secret12');
+
+  assert.equal(result.success, true);
+  // The account is already durably committed at this point — a failure
+  // recording last-login must not roll back a transaction that no longer
+  // exists or turn a successful registration into an error.
+  assert.deepEqual(operations, ['begin', 'commit']);
+});
+
+test('register does not leave a transaction open across the hashPassword await', async () => {
+  const operations: string[] = [];
+  let releaseHash!: () => void;
+  const hashGate = new Promise<void>((resolve) => {
+    releaseHash = resolve;
+  });
+
+  const service = createAuthService(createDependencies({
+    transaction: {
+      begin: () => operations.push('begin'),
+      commit: () => operations.push('commit'),
+      rollback: () => operations.push('rollback'),
+    },
+    hashPassword: async (password) => {
+      operations.push(`hash:${password}`);
+      await hashGate;
+      return 'hash';
+    },
+  }));
+
+  const pending = service.register('alice', 'secret12');
+
+  // While hashPassword is still pending, no transaction has been opened yet
+  // — a concurrent register() call landing here would hit hasUsers() again,
+  // not a nested begin() on an already-open transaction.
+  assert.deepEqual(operations, ['hash:secret12']);
+
+  releaseHash();
+  await pending;
+
+  assert.deepEqual(operations, ['hash:secret12', 'begin', 'commit']);
 });
 
 test('register seeds default preferences onto the new user when configured', async () => {

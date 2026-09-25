@@ -75,8 +75,24 @@ export function createAuthService(dependencies: AuthDependencies) {
         );
       }
 
+      if (dependencies.users.hasUsers()) {
+        throw new AppError('User already exists. This is a single-user system.', {
+          code: 'AUTH_USER_ALREADY_CONFIGURED',
+          statusCode: 403,
+        });
+      }
+
+      // Hashing happens before the transaction opens so nothing awaits while
+      // it's held: begin()/commit() below are back-to-back synchronous calls
+      // on the one shared connection, which is what actually prevents a
+      // concurrent register() call from observing a transaction left open
+      // across this await and crashing on a nested BEGIN.
+      const passwordHash = await dependencies.hashPassword(password);
+
       dependencies.transaction.begin();
       try {
+        // Re-checked: the await above reopened the window the first check
+        // was meant to close.
         if (dependencies.users.hasUsers()) {
           throw new AppError('User already exists. This is a single-user system.', {
             code: 'AUTH_USER_ALREADY_CONFIGURED',
@@ -84,17 +100,28 @@ export function createAuthService(dependencies: AuthDependencies) {
           });
         }
 
-        const passwordHash = await dependencies.hashPassword(password);
         const user = dependencies.users.createUser(username, passwordHash);
         const token = dependencies.generateToken(user);
         dependencies.transaction.commit();
-        dependencies.users.updateLastLogin(numericUserId(user.id));
+
+        // Best-effort: the account is already durably committed at this
+        // point, so a failure here must not roll back a transaction that no
+        // longer exists, or turn a successful registration into an error.
+        try {
+          dependencies.users.updateLastLogin(numericUserId(user.id));
+        } catch (error) {
+          console.error('Failed to record last login for new user:', error);
+        }
 
         if (dependencies.defaultUserPreferences && dependencies.preferences) {
-          dependencies.preferences.savePreferences(
-            numericUserId(user.id),
-            dependencies.defaultUserPreferences,
-          );
+          try {
+            dependencies.preferences.savePreferences(
+              numericUserId(user.id),
+              dependencies.defaultUserPreferences,
+            );
+          } catch (error) {
+            console.error('Failed to seed default preferences for new user:', error);
+          }
         }
 
         return {
