@@ -25,7 +25,7 @@ export default defineConfig({
       VITE_IS_PLATFORM: 'false',
     },
     setupFiles: ['./vitest.setup.ts'],
-    include: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
+    include: ['src/**/*.test.ts', 'src/**/*.test.tsx', 'shared/**/*.test.js'],
     restoreMocks: true,
   },
 });

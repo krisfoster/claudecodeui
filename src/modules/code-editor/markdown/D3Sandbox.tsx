@@ -162,9 +162,10 @@ export default function D3Sandbox({ code }: D3SandboxProps) {
  * `render(container, d3, width, height)`, calls it once against a root
  * `<div>`, and reports back to the parent via `postMessage` — a resize on
  * success (so the chat bubble can size to content) or an error message on
- * failure. `window.onerror` also reports back, so a runtime error after a
- * partial render still falls back to raw source instead of showing a
- * half-drawn chart.
+ * failure. `window.onerror` and `unhandledrejection` also report back, so a
+ * sync or async runtime error after a partial render still falls back to
+ * raw source instead of showing a half-drawn chart or hanging silently
+ * until the timeout.
  */
 function buildSrcDoc(code: string, d3Source: string, isDarkMode: boolean): string {
   const background = isDarkMode ? '#18181b' : '#ffffff';
@@ -172,7 +173,7 @@ function buildSrcDoc(code: string, d3Source: string, isDarkMode: boolean): strin
 <html>
 <head>
 <meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'none'; img-src data:">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval'; style-src 'unsafe-inline'; connect-src 'none'; img-src data:; navigate-to 'none'">
 <style>html,body{margin:0;padding:0;background:${background};overflow:hidden}#root{width:100%}</style>
 </head>
 <body>
@@ -187,9 +188,13 @@ function buildSrcDoc(code: string, d3Source: string, isDarkMode: boolean): strin
     post({ type: 'd3-error', message: String(message) });
     return true;
   };
+  window.addEventListener('unhandledrejection', function (event) {
+    var reason = event.reason;
+    post({ type: 'd3-error', message: reason && reason.message ? reason.message : String(reason) });
+  });
   try {
     var container = document.getElementById('root');
-    var render = new Function('container', 'd3', 'width', 'height', ${JSON.stringify(code)});
+    var render = new Function('container', 'd3', 'width', 'height', ${JSON.stringify(code).replace(/</g, '\\u003c')});
     render(container, d3, container.clientWidth, container.clientHeight);
     var report = function () {
       post({ type: 'd3-resize', height: document.body.scrollHeight });
