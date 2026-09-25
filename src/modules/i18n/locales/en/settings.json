@@ -388,6 +388,11 @@
       "claudeDescription": "Equivalent to --dangerously-skip-permissions flag",
       "cursorDescription": "Equivalent to -f flag in Cursor CLI"
     },
+    "announceRenderCapabilities": {
+      "title": "Rendering",
+      "label": "Tell Claude this client renders rich output",
+      "description": "Lets Claude know Markdown tables, math, syntax-highlighted code, Mermaid diagrams, and images all render inline here, so it can prefer a diagram over prose when that fits better."
+    },
     "allowedTools": {
       "title": "Allowed Tools",
       "description": "Tools that are automatically allowed without prompting for permission",

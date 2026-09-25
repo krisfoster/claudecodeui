@@ -32,6 +32,7 @@ type SentMessage = {
   options?: {
     toolsSettings?: { allowedTools?: string[]; skipPermissions?: boolean };
     skipPermissions?: boolean;
+    announceRenderCapabilities?: boolean;
   };
 };
 
@@ -154,4 +155,22 @@ test('a provider with nothing stored sends empty tool settings, not Claude setti
     skipPermissions: false,
   });
   assert.equal(options.skipPermissions, false);
+});
+
+test('announceRenderCapabilities defaults to true when nothing is stored', async () => {
+  const options = await submit('claude');
+
+  assert.equal(options.announceRenderCapabilities, true);
+});
+
+test('announceRenderCapabilities carries an explicit false from the stored preference', async () => {
+  writeUserPreference('claudePermissions', {
+    allowedTools: [],
+    skipPermissions: false,
+    announceRenderCapabilities: false,
+  });
+
+  const options = await submit('claude');
+
+  assert.equal(options.announceRenderCapabilities, false);
 });

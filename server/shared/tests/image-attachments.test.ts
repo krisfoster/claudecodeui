@@ -17,6 +17,7 @@ import {
   parseImagesInputTag,
   resolveImageMediaType,
   toImageAttachments,
+  toolResultContentToText,
 } from '@/shared/image-attachments.js';
 
 // 1x1 transparent PNG
@@ -350,4 +351,34 @@ test('provider builders refuse descriptors outside the allowed roots', async () 
     cwd,
   );
   assert.deepEqual(claudeContent, [{ type: 'text', text: 'prompt' }]);
+});
+
+test('toolResultContentToText passes a plain string through unchanged', () => {
+  assert.equal(toolResultContentToText('plain output'), 'plain output');
+});
+
+test('toolResultContentToText joins text blocks and falls back to JSON for anything else', () => {
+  assert.equal(
+    toolResultContentToText([{ type: 'text', text: 'first' }, { type: 'text', text: 'second' }]),
+    'first\nsecond',
+  );
+  assert.equal(toolResultContentToText({ weird: 'shape' }), '{"weird":"shape"}');
+});
+
+test('toolResultContentToText renders a base64 image block as an inline markdown image', () => {
+  const content = [
+    { type: 'text', text: 'Captured the page.' },
+    { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: 'Zm9v' } },
+    { type: 'text', text: 'Done.' },
+  ];
+
+  assert.equal(
+    toolResultContentToText(content),
+    'Captured the page.\n![](data:image/jpeg;base64,Zm9v)\nDone.',
+  );
+});
+
+test('toolResultContentToText defaults a missing media_type to image/png', () => {
+  const content = [{ type: 'image', source: { type: 'base64', data: 'Zm9v' } }];
+  assert.equal(toolResultContentToText(content), '![](data:image/png;base64,Zm9v)');
 });

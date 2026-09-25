@@ -1330,11 +1330,12 @@ export type AgentSettingsProject = {
   path?: string;
 };
 
-/** Claude's persisted permission settings: the allowed and disallowed tool patterns and whether permission prompts are skipped; read and written as one unit by the settings controller. */
+/** Claude's persisted permission settings: the allowed and disallowed tool patterns, whether permission prompts are skipped, and whether Claude is told this client renders Markdown/Mermaid/images; read and written as one unit by the settings controller. */
 export type ClaudePermissionsState = {
   allowedTools: string[];
   disallowedTools: string[];
   skipPermissions: boolean;
+  announceRenderCapabilities: boolean;
 };
 
 /** The user's notification settings, grouped into delivery channels (in-app, web push, desktop, sound) and the events that trigger them; mirrors the payload of the notification preferences API. */

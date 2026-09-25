@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { AlertTriangle, Plus, Shield, X } from 'lucide-react';
+import { AlertTriangle, Plus, Shield, Sparkles, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import { Button, Input } from '@/shared/ui';
@@ -54,6 +54,8 @@ type ClaudePermissionsProps = {
   agent: 'claude';
   skipPermissions: boolean;
   onSkipPermissionsChange: (value: boolean) => void;
+  announceRenderCapabilities: boolean;
+  onAnnounceRenderCapabilitiesChange: (value: boolean) => void;
   allowedTools: string[];
   onAllowedToolsChange: (value: string[]) => void;
   disallowedTools: string[];
@@ -63,6 +65,8 @@ type ClaudePermissionsProps = {
 function ClaudePermissions({
   skipPermissions,
   onSkipPermissionsChange,
+  announceRenderCapabilities,
+  onAnnounceRenderCapabilitiesChange,
   allowedTools,
   onAllowedToolsChange,
   disallowedTools,
@@ -113,6 +117,31 @@ function ClaudePermissions({
               </div>
               <div className="text-sm text-orange-700 dark:text-orange-300">
                 {t('permissions.skipPermissions.claudeDescription')}
+              </div>
+            </div>
+          </label>
+        </div>
+      </div>
+
+      <div className="space-y-4">
+        <div className="flex items-center gap-3">
+          <Sparkles className="h-5 w-5 text-blue-500" />
+          <h3 className="text-lg font-medium text-foreground">{t('permissions.announceRenderCapabilities.title')}</h3>
+        </div>
+        <div className="rounded-lg border border-border bg-muted/30 p-4">
+          <label className="flex items-center gap-3">
+            <input
+              type="checkbox"
+              checked={announceRenderCapabilities}
+              onChange={(event) => onAnnounceRenderCapabilitiesChange(event.target.checked)}
+              className="h-4 w-4 rounded border-input bg-card text-primary focus:ring-2 focus:ring-primary"
+            />
+            <div>
+              <div className="font-medium text-foreground">
+                {t('permissions.announceRenderCapabilities.label')}
+              </div>
+              <div className="text-sm text-muted-foreground">
+                {t('permissions.announceRenderCapabilities.description')}
               </div>
             </div>
           </label>

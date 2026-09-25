@@ -34,6 +34,7 @@ type ClaudeSettingsStorage = {
   allowedTools?: string[];
   disallowedTools?: string[];
   skipPermissions?: boolean;
+  announceRenderCapabilities?: boolean;
   projectSortOrder?: ProjectSortOrder;
 };
 
@@ -79,6 +80,7 @@ const createEmptyClaudePermissions = (): ClaudePermissionsState => ({
   allowedTools: [],
   disallowedTools: [],
   skipPermissions: false,
+  announceRenderCapabilities: true,
 });
 
 const createEmptyCursorPermissions = (): CursorPermissionsState => ({
@@ -156,6 +158,9 @@ export function useSettingsController({ isOpen, initialTab }: UseSettingsControl
         allowedTools: savedClaudeSettings.allowedTools || [],
         disallowedTools: savedClaudeSettings.disallowedTools || [],
         skipPermissions: Boolean(savedClaudeSettings.skipPermissions),
+        // Absent (never saved) defaults to on, matching the server's default
+        // when a session omits the flag entirely.
+        announceRenderCapabilities: savedClaudeSettings.announceRenderCapabilities !== false,
       });
       setProjectSortOrder(readUserPreference<ProjectSortOrder>('projectSortOrder', 'name') === 'date' ? 'date' : 'name');
 
@@ -227,6 +232,7 @@ export function useSettingsController({ isOpen, initialTab }: UseSettingsControl
           allowedTools: claudePermissions.allowedTools,
           disallowedTools: claudePermissions.disallowedTools,
           skipPermissions: claudePermissions.skipPermissions,
+          announceRenderCapabilities: claudePermissions.announceRenderCapabilities,
         },
         projectSortOrder,
         cursorPermissions: {
@@ -255,6 +261,7 @@ export function useSettingsController({ isOpen, initialTab }: UseSettingsControl
     claudePermissions.allowedTools,
     claudePermissions.disallowedTools,
     claudePermissions.skipPermissions,
+    claudePermissions.announceRenderCapabilities,
     codexPermissionMode,
     cursorPermissions.allowedCommands,
     cursorPermissions.disallowedCommands,

@@ -56,6 +56,16 @@ const supersededInstances = new WeakSet();
 
 const TOOL_APPROVAL_TIMEOUT_MS = parseInt(process.env.CLAUDE_TOOL_APPROVAL_TIMEOUT_MS, 10) || 55000;
 
+// There is no client-capabilities handshake in the Agent SDK — the
+// documented way to tell Claude what a client can render is appending to its
+// system prompt. Without this Claude has no reason to prefer a diagram over
+// prose: it can't tell this UI apart from a plain terminal.
+const RENDER_CAPABILITIES_SYSTEM_PROMPT = 'This client renders your Markdown output directly in the chat: '
+  + 'GitHub-flavored tables, fenced code blocks with syntax highlighting, LaTeX math ($$...$$, \\(...\\)), '
+  + 'and ```mermaid fenced blocks as diagrams (flowchart, sequence, class, state, etc.). Prefer a Mermaid '
+  + 'diagram over prose when explaining architecture, control flow, or a sequence of steps. Images '
+  + 'referenced as ![alt](path) render inline, including workspace-relative paths and data: URIs.';
+
 // How long background work is allowed to keep running after a turn ends. This drives
 // two halves of the same behaviour:
 //
@@ -221,7 +231,16 @@ function matchesToolPermission(entry, toolName, input) {
 }
 
 function mapCliOptionsToSDK(options = {}) {
-  const { providerSessionId, cwd, toolsSettings, permissionMode, effort, resumeAnchorId, resumeFromScratch } = options;
+  const {
+    providerSessionId,
+    cwd,
+    toolsSettings,
+    permissionMode,
+    effort,
+    resumeAnchorId,
+    resumeFromScratch,
+    announceRenderCapabilities
+  } = options;
 
   const sdkOptions = {};
 
@@ -286,7 +305,8 @@ function mapCliOptionsToSDK(options = {}) {
 
   sdkOptions.systemPrompt = {
     type: 'preset',
-    preset: 'claude_code'
+    preset: 'claude_code',
+    ...(announceRenderCapabilities !== false && { append: RENDER_CAPABILITIES_SYSTEM_PROMPT })
   };
 
   sdkOptions.settingSources = ['project', 'user', 'local'];
@@ -1480,5 +1500,6 @@ export {
   getPendingApprovalsForSession,
   reconnectSessionWriter,
   extractTokenBudget,
-  extractCumulativeTokenBudget
+  extractCumulativeTokenBudget,
+  mapCliOptionsToSDK
 };

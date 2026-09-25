@@ -644,6 +644,10 @@ export function useChatComposerState({
       permissionMode: resolvePermissionModeForProvider(provider, permissionMode),
       toolsSettings,
       skipPermissions: toolsSettings?.skipPermissions || false,
+      // Absent (never saved, or a provider other than Claude, which has no
+      // such setting) defaults to on, matching the server's own default.
+      announceRenderCapabilities: (toolsSettings as { announceRenderCapabilities?: boolean } | undefined)
+        ?.announceRenderCapabilities !== false,
       sessionSummary: getNotificationSessionSummary(selectedSession, currentInput),
     };
   }, [

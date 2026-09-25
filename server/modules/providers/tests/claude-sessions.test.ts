@@ -668,6 +668,34 @@ test('a live SDK tool result caps the strings inside its structured output', () 
   assert.match(forwarded?.originalFile ?? '', /… 10000 more characters$/);
 });
 
+test('a tool result with a raw image content block renders as an inline markdown image', () => {
+  // MCP tools (a screenshot, e.g.) return an image as a raw Anthropic
+  // `{type: 'image', source: {...}}` block inside the tool_result. Before
+  // this, the array branch fell straight to JSON.stringify and the chat
+  // showed a wall of base64 JSON instead of a picture. MarkdownImage already
+  // renders a `![](data:...)` reference, so that is the target shape.
+  const [normalized] = new ClaudeSessionsProvider().normalizeMessage({
+    type: 'user',
+    session_id: SESSION_ID,
+    parent_tool_use_id: null,
+    uuid: 'screenshot-result',
+    message: {
+      role: 'user',
+      content: [{
+        type: 'tool_result',
+        tool_use_id: 'toolu_screenshot',
+        content: [
+          { type: 'text', text: 'Captured the current page.' },
+          { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAAA' } },
+        ],
+      }],
+    },
+  }, SESSION_ID);
+
+  assert.equal(normalized?.kind, 'tool_result');
+  assert.equal(normalized?.content, 'Captured the current page.\n![](data:image/png;base64,AAAA)');
+});
+
 const WORKFLOW_SESSION_ID = 'claude-workflow-session';
 const WORKFLOW_TOOL_USE_ID = 'toolu_workflow_1';
 const WORKFLOW_RUN_ID = 'wf_16fbf852-274';

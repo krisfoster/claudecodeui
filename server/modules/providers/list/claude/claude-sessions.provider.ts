@@ -18,7 +18,7 @@ import type {
   WorkflowAgentProgress,
   WorkflowInfo,
 } from '@/shared/types.js';
-import { parseFilesInputTag } from '@/shared/image-attachments.js';
+import { parseFilesInputTag, toolResultContentToText } from '@/shared/image-attachments.js';
 import { prepareTranscriptMessages, truncateNestedOutput } from '@/shared/message-unification.js';
 import {
   createNormalizedMessage,
@@ -165,13 +165,7 @@ async function readClaudeSubagentTranscript(filePath: string): Promise<ClaudeSub
             }
 
             tool.toolResult = {
-              content: typeof part.content === 'string'
-                ? part.content
-                : Array.isArray(part.content)
-                  ? part.content
-                    .map((contentPart: AnyRecord) => contentPart?.text || '')
-                    .join('\n')
-                  : JSON.stringify(part.content),
+              content: toolResultContentToText(part.content),
               isError: Boolean(part.is_error),
             };
           }
@@ -1207,7 +1201,7 @@ export class ClaudeSessionsProvider implements IProviderSessions {
               provider: PROVIDER,
               kind: 'tool_result',
               toolId: part.tool_use_id,
-              content: typeof part.content === 'string' ? part.content : JSON.stringify(part.content),
+              content: toolResultContentToText(part.content),
               isError: Boolean(part.is_error),
               // `toolUseResult` on disk, `tool_use_result` on the live SDK
               // stream. Reading only the transcript key meant a live agent
@@ -1634,9 +1628,7 @@ export class ClaudeSessionsProvider implements IProviderSessions {
         }
 
         msg.toolResult = {
-          content: typeof toolResult.content === 'string'
-            ? toolResult.content
-            : JSON.stringify(toolResult.content),
+          content: toolResultContentToText(toolResult.content),
           isError: toolResult.isError,
           toolUseResult: toolResult.toolUseResult,
         };

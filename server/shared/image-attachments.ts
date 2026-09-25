@@ -433,3 +433,41 @@ export function buildCodexInputItems(prompt: string, images: unknown, cwd?: stri
   }
   return items;
 }
+
+type AnthropicContentBlock = {
+  type?: string;
+  text?: string;
+  source?: { type?: string; media_type?: string; data?: string };
+};
+
+/**
+ * Turns a `tool_result`'s `content` — a string, or an array of Anthropic
+ * content blocks — into the single string the chat transcript's Markdown
+ * renderer displays.
+ *
+ * A raw base64 `image` block has nowhere else to go: MCP tools (e.g. a
+ * screenshot) return it inline in the tool result, not as a separate
+ * attachment. Rendering it as `![](data:...)` reuses the exact path
+ * `MarkdownImage` already handles for model-authored images — no new
+ * frontend plumbing — instead of the block falling through to
+ * `JSON.stringify` and showing up as a wall of base64 JSON. Text blocks pass
+ * through unchanged and in order.
+ */
+export function toolResultContentToText(content: unknown): string {
+  if (typeof content === 'string') {
+    return content;
+  }
+  if (!Array.isArray(content)) {
+    return JSON.stringify(content);
+  }
+  return (content as AnthropicContentBlock[])
+    .map((part) => {
+      if (part?.type === 'image' && part.source?.type === 'base64' && typeof part.source.data === 'string') {
+        const mediaType = typeof part.source.media_type === 'string' ? part.source.media_type : 'image/png';
+        return `![](data:${mediaType};base64,${part.source.data})`;
+      }
+      return typeof part?.text === 'string' ? part.text : '';
+    })
+    .filter(Boolean)
+    .join('\n');
+}
