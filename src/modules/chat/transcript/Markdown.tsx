@@ -7,7 +7,7 @@ import rehypeKatex from 'rehype-katex';
 import { oneDark, oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { useTranslation } from 'react-i18next';
 
-import { MermaidDiagram } from '@/modules/code-editor';
+import { D3Sandbox, MermaidDiagram } from '@/modules/code-editor';
 import { MarkdownImage } from '@/modules/chat/transcript/MarkdownImage';
 import { normalizeInlineCodeFences } from '@/modules/chat/utils/chatFormatting';
 import { copyTextToClipboard } from '@/shared/utils';
@@ -108,6 +108,10 @@ const CodeBlock = ({ node: _node, className, children, forceBlock, ...props }: C
 
   if (language === 'mermaid') {
     return <MermaidDiagram code={raw} />;
+  }
+
+  if (language === 'd3') {
+    return <D3Sandbox code={raw} />;
   }
 
   return (

@@ -6,6 +6,7 @@ import { copyTextToClipboard } from '@/shared/utils';
 import { SyntaxHighlighter } from '@/shared/syntaxHighlighter';
 import { useTheme } from '@/shared/context/ThemeContext';
 import MermaidDiagram from '@/modules/code-editor/markdown/MermaidDiagram';
+import D3Sandbox from '@/modules/code-editor/markdown/D3Sandbox';
 
 type MarkdownCodeBlockProps = {
   inline?: boolean;
@@ -42,6 +43,10 @@ export default function MarkdownCodeBlock({
 
   if (language === 'mermaid') {
     return <MermaidDiagram code={rawContent} />;
+  }
+
+  if (language === 'd3') {
+    return <D3Sandbox code={rawContent} />;
   }
 
   return (
