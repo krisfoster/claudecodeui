@@ -9,3 +9,5 @@ export { createProject } from './services/project-management.service.js';
 export { deleteOrArchiveProject, deleteSessionJsonlFilesForProjectPath } from './services/project-delete.service.js';
 // restoreArchivedProject: used by the worktrees module to re-activate an archived project when its worktree is reopened.
 export { restoreArchivedProject } from './services/project-delete.service.js';
+// autoProvisionDefaultProjectIfConfigured: used by the server entrypoint to register CLOUDCLI_DEFAULT_PROJECT_PATH at boot.
+export { autoProvisionDefaultProjectIfConfigured } from './auto-provision-project.js';

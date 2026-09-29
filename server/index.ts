@@ -33,6 +33,7 @@ import { settingsRoutes } from './modules/settings/index.js';
 import { createSystemModule } from './modules/system/index.js';
 import { createAgentModule } from './modules/agent/index.js';
 import projectModuleRoutes from './modules/projects/projects.routes.js';
+import { autoProvisionDefaultProjectIfConfigured } from './modules/projects/index.js';
 import notificationRoutes from './modules/notifications/notifications.routes.js';
 import { userRoutes } from './modules/user/index.js';
 import {
@@ -358,6 +359,17 @@ async function startServer() {
             // the sandbox is up.
             console.log(`CLOUDCLI_ADMIN_USERNAME=${provisionedAdmin.username}`);
             console.log(`CLOUDCLI_ADMIN_PASSWORD=${provisionedAdmin.password}`);
+        }
+
+        // Opt-in, off by default: only set when an extra workspace path is
+        // handed in (e.g. by the sbx kit's ccui-sbx launcher). A failure
+        // (bad/nonexistent path) only warns — boot continues either way.
+        const provisionedProject = await autoProvisionDefaultProjectIfConfigured().catch((error) => {
+            console.warn('[WARN] Could not auto-provision default project:', getErrorMessage(error));
+            return null;
+        });
+        if (provisionedProject) {
+            console.log(`${terminalTextStyles.info('[INFO]')} Registered default project: ${provisionedProject.projectPath}`);
         }
 
         // Configure Web Push (VAPID keys)

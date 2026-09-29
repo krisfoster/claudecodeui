@@ -58,6 +58,41 @@ and `CLOUDCLI_ADMIN_PASSWORD` (set directly on the server process, not
 currently exposed via this kit) override the generated username/password
 if you need a fixed value instead.
 
+## Extra mounted workspaces become the default project
+
+`sbx` always bind-mounts a workspace at its exact host absolute path
+(e.g. `/Users/<you>/claude_work/kb`) — never remapped under `/home/agent`,
+for the primary workspace or any extra one, and there's no `sbx` flag to
+change that. The app's own default `WORKSPACES_ROOT` (`os.homedir()`,
+i.e. `/home/agent` in the sandbox) would reject every one of those paths
+if you tried adding it as a project by hand. The kit sets
+`WORKSPACES_ROOT=/` to fix that — `FORBIDDEN_WORKSPACE_PATHS`
+(`server/shared/utils.ts`) still blocks `/etc`, `/bin`, `/usr`, `/var`,
+`/root`, bare `/`, etc. regardless of this value, so this doesn't disable
+the safety floor; it just stops the extra home-directory-shaped
+restriction from rejecting paths that are only "wrong" because they
+don't live under `/home/agent`. The sandbox's own mount boundary (nothing
+exists in here except what you explicitly mounted) is the real security
+boundary for a disposable single-user dev sandbox — this is not a
+production posture, and shouldn't be set outside one.
+
+Pass a second workspace path to `ccui-sbx` and it's mounted **and**
+auto-registered as a project — no manual folder-browser/path-typing, and
+no "outside the allowed workspace root" error:
+
+```bash
+ccui-sbx . ~/claude_work/kb
+```
+
+`ccui-sbx` resolves that second path to its absolute form and sets
+`CLOUDCLI_DEFAULT_PROJECT_PATH` on the sandbox; the server registers it
+at boot (idempotently — a restart with the same path is a silent no-op,
+not a duplicate or an error) and it shows up ready to open once the UI
+loads. `CLOUDCLI_ADMIN_USERNAME`/`CLOUDCLI_ADMIN_PASSWORD` are the
+matching direct-env-var overrides described above; there's no separate
+override for the project path today beyond passing a different second
+argument.
+
 ## Usage
 
 ### Option A: `ccui-sbx` launcher (recommended)
