@@ -25,6 +25,18 @@ environment:
     # `ccui-sbx` surfaces in its startup summary. Only fires when no user
     # exists yet — never touches an existing account.
     CLOUDCLI_AUTO_CREATE_ADMIN: "true"
+    # `sbx` always bind-mounts a workspace at its exact host absolute path
+    # (e.g. /Users/<you>/repos/claudecodeui), never remapped under
+    # /home/agent — there is no `sbx` flag to change that, for the primary
+    # workspace or any extra one. The app's own default WORKSPACES_ROOT
+    # (os.homedir(), i.e. /home/agent here) would reject every one of
+    # those paths when adding a project. FORBIDDEN_WORKSPACE_PATHS
+    # (server/shared/utils.ts) still blocks /etc, /bin, /usr, /var, /root,
+    # bare /, etc. regardless of this value — the sandbox's own mount
+    # boundary (only what you explicitly mounted exists in here at all) is
+    # the real security boundary for a disposable single-user dev sandbox,
+    # so the extra home-directory-shaped restriction is redundant here.
+    WORKSPACES_ROOT: "/"
 
 commands:
   install:

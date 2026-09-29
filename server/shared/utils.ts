@@ -374,8 +374,16 @@ export async function validateWorkspacePath(requestedPath: string): Promise<Work
     }
 
     const resolvedWorkspaceRoot = normalizeProjectPath(await realpath(WORKSPACES_ROOT));
+    // A bare filesystem root (e.g. "/", or "C:\" on Windows) means "no
+    // containment restriction beyond FORBIDDEN_WORKSPACE_PATHS" — every
+    // absolute path is trivially under its own root. Without this,
+    // `${resolvedWorkspaceRoot}${path.sep}` builds "//" for a root of "/",
+    // which no normalized path ever starts with, silently rejecting
+    // everything instead of nothing.
+    const isUnrestrictedRoot = resolvedWorkspaceRoot === path.parse(resolvedWorkspaceRoot).root;
     if (
-      !resolvedPath.startsWith(`${resolvedWorkspaceRoot}${path.sep}`)
+      !isUnrestrictedRoot
+      && !resolvedPath.startsWith(`${resolvedWorkspaceRoot}${path.sep}`)
       && resolvedPath !== resolvedWorkspaceRoot
     ) {
       return {
@@ -392,7 +400,8 @@ export async function validateWorkspacePath(requestedPath: string): Promise<Work
         const resolvedSymlinkPath = path.resolve(path.dirname(absolutePath), symlinkTarget);
         const realSymlinkPath = await realpath(resolvedSymlinkPath);
         if (
-          !realSymlinkPath.startsWith(`${resolvedWorkspaceRoot}${path.sep}`)
+          !isUnrestrictedRoot
+          && !realSymlinkPath.startsWith(`${resolvedWorkspaceRoot}${path.sep}`)
           && realSymlinkPath !== resolvedWorkspaceRoot
         ) {
           return {

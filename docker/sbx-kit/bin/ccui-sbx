@@ -15,12 +15,14 @@
 # (attach to the interactive claude session immediately).
 #
 # Usage:
-#   ccui-sbx [PATH] [sbx run flags...] [-- AGENT_ARGS...]
+#   ccui-sbx [PATH] [EXTRA_WORKSPACE] [sbx run flags...] [-- AGENT_ARGS...]
 #
 # Examples:
 #   ccui-sbx                          # mount $PWD, headless, prints the URLs
 #   ccui-sbx ~/repos/claudecodeui
 #   ccui-sbx . --name ccui-dev
+#   ccui-sbx . ~/claude_work/kb       # also mounts a second workspace,
+#                                     # auto-registered as the default project
 #   CCUI_SBX_ATTACH=1 ccui-sbx .      # attach to claude interactively instead
 #
 # Env overrides:
@@ -28,6 +30,14 @@
 #   CCUI_SBX_CLIENT_PORT   host port published to the Vite client (container :5173). Default 5173.
 #   CCUI_SBX_NO_KIT=1      skip attaching the claudecodeui-dev kit (plain claude sandbox + ports)
 #   CCUI_SBX_ATTACH=1      attach to the interactive claude session instead of running headless
+#
+# A second bare positional path (e.g. `ccui-sbx . ~/claude_work/kb`) is
+# mounted as an extra workspace AND passed to the sandbox as
+# CLOUDCLI_DEFAULT_PROJECT_PATH, so the server registers it as a project
+# automatically instead of rejecting it if you tried adding it by hand —
+# `sbx` always mounts every workspace at its exact host path (never
+# remapped under /home/agent), which the app's default workspace-root
+# check would otherwise reject.
 #
 # The kit is resolved relative to this script's own real location, so it
 # always uses the kit from the checkout this script was installed from,
@@ -41,7 +51,7 @@
 set -euo pipefail
 
 usage() {
-  sed -n '2,37p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,49p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 if [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
@@ -143,12 +153,33 @@ if [ -z "$sbx_name" ]; then
   name_flags=(--name "$sbx_name")
 fi
 
+# Positional workspace paths precede any flag (matches the documented
+# `ccui-sbx [PATH] [EXTRA_WORKSPACE] [sbx run flags...]` usage) — collect
+# the leading run of bare args, stripping a trailing `:ro`. The first is
+# the primary checkout; a second one is an extra mounted workspace that
+# becomes the sandbox's default project (see spec.yaml's WORKSPACES_ROOT
+# comment for why it would otherwise be rejected).
+workspace_paths=()
+for arg in "$@"; do
+  case "$arg" in
+    --|-*) break ;;
+    *) workspace_paths+=("${arg%:ro}") ;;
+  esac
+done
+
+env_flags=()
+if [ "${#workspace_paths[@]}" -ge 2 ] && [ -d "${workspace_paths[1]}" ]; then
+  default_project_path="$(cd "${workspace_paths[1]}" >/dev/null 2>&1 && pwd)"
+  env_flags=(--env "CLOUDCLI_DEFAULT_PROJECT_PATH=$default_project_path")
+fi
+
 if [ "${CCUI_SBX_ATTACH:-0}" = "1" ]; then
   exec sbx run claude \
     "${kit_flags[@]}" \
     --publish "$server_publish" \
     --publish "$client_publish" \
     "${name_flags[@]}" \
+    "${env_flags[@]}" \
     "$@"
 fi
 
@@ -157,6 +188,7 @@ sbx run claude \
   --publish "$server_publish" \
   --publish "$client_publish" \
   "${name_flags[@]}" \
+  "${env_flags[@]}" \
   --detached \
   "$@"
 
