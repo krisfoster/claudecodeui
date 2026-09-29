@@ -323,34 +323,12 @@ export async function validateWorkspacePath(requestedPath: string): Promise<Work
     const absolutePath = path.resolve(normalizedRequestedPath);
     const normalizedPath = normalizeProjectPath(absolutePath);
 
-    if (FORBIDDEN_WORKSPACE_PATHS.includes(normalizedPath) || normalizedPath === '/') {
-      return {
-        valid: false,
-        error: 'Cannot use system-critical directories as workspace locations',
-      };
-    }
-
-    for (const forbiddenPath of FORBIDDEN_WORKSPACE_PATHS) {
-      const normalizedForbiddenPath = normalizeProjectPath(forbiddenPath);
-      if (
-        normalizedPath === normalizedForbiddenPath
-        || normalizedPath.startsWith(`${normalizedForbiddenPath}${path.sep}`)
-      ) {
-        // Allow specific user-writable folders under /var.
-        if (
-          normalizedForbiddenPath === '/var'
-          && (normalizedPath.startsWith('/var/tmp') || normalizedPath.startsWith('/var/folders'))
-        ) {
-          continue;
-        }
-
-        return {
-          valid: false,
-          error: `Cannot create workspace in system directory: ${forbiddenPath}`,
-        };
-      }
-    }
-
+    // Resolved early (moved ahead of where it used to sit, after the
+    // forbidden-path checks) because the root-collision exemption below
+    // needs it: comparing an *unresolved* input path against a *resolved*
+    // WORKSPACES_ROOT would silently miscompare whenever either side is a
+    // symlink (e.g. macOS's /tmp -> /private/tmp) — both sides need the
+    // same resolution basis.
     let resolvedPath = normalizeProjectPath(absolutePath);
     try {
       await access(absolutePath);
@@ -373,18 +351,74 @@ export async function validateWorkspacePath(requestedPath: string): Promise<Work
       }
     }
 
+    // The configured root is the operator's explicit trust anchor — its own
+    // subtree must always be usable as a workspace, even when the root
+    // happens to collide with a generically forbidden-looking path (e.g.
+    // WORKSPACES_ROOT is /root in any container/sandbox running as root,
+    // which is common). Resolved before the forbidden-path checks below so
+    // that collision can never veto the operator's own choice.
+    //
+    // Two exceptions keep this from swallowing the protection entirely:
+    // - A bare filesystem root ("/") never gets this exemption, even if
+    //   WORKSPACES_ROOT itself is "/" (the "unrestricted root" case just
+    //   below already covers that configuration on its own terms) —
+    //   registering the entire filesystem as one project stays blocked
+    //   unconditionally.
+    // - When WORKSPACES_ROOT *is* a bare filesystem root, nothing is
+    //   exempted here at all: FORBIDDEN_WORKSPACE_PATHS (/etc, /var, etc.)
+    //   must keep applying to everything, which is the whole point of that
+    //   "unrestricted but still not everything" configuration.
     const resolvedWorkspaceRoot = normalizeProjectPath(await realpath(WORKSPACES_ROOT));
+    const isUnrestrictedRoot = resolvedWorkspaceRoot === path.parse(resolvedWorkspaceRoot).root;
+    const isWithinConfiguredRoot = !isUnrestrictedRoot && (
+      resolvedPath === resolvedWorkspaceRoot
+      || resolvedPath.startsWith(`${resolvedWorkspaceRoot}${path.sep}`)
+    );
+
+    if (
+      normalizedPath === '/'
+      || (!isWithinConfiguredRoot && FORBIDDEN_WORKSPACE_PATHS.includes(normalizedPath))
+    ) {
+      return {
+        valid: false,
+        error: 'Cannot use system-critical directories as workspace locations',
+      };
+    }
+
+    for (const forbiddenPath of FORBIDDEN_WORKSPACE_PATHS) {
+      if (isWithinConfiguredRoot) {
+        break;
+      }
+
+      const normalizedForbiddenPath = normalizeProjectPath(forbiddenPath);
+      if (
+        normalizedPath === normalizedForbiddenPath
+        || normalizedPath.startsWith(`${normalizedForbiddenPath}${path.sep}`)
+      ) {
+        // Allow specific user-writable folders under /var.
+        if (
+          normalizedForbiddenPath === '/var'
+          && (normalizedPath.startsWith('/var/tmp') || normalizedPath.startsWith('/var/folders'))
+        ) {
+          continue;
+        }
+
+        return {
+          valid: false,
+          error: `Cannot create workspace in system directory: ${forbiddenPath}`,
+        };
+      }
+    }
+
     // A bare filesystem root (e.g. "/", or "C:\" on Windows) means "no
     // containment restriction beyond FORBIDDEN_WORKSPACE_PATHS" — every
     // absolute path is trivially under its own root. Without this,
     // `${resolvedWorkspaceRoot}${path.sep}` builds "//" for a root of "/",
     // which no normalized path ever starts with, silently rejecting
     // everything instead of nothing.
-    const isUnrestrictedRoot = resolvedWorkspaceRoot === path.parse(resolvedWorkspaceRoot).root;
     if (
       !isUnrestrictedRoot
-      && !resolvedPath.startsWith(`${resolvedWorkspaceRoot}${path.sep}`)
-      && resolvedPath !== resolvedWorkspaceRoot
+      && !isWithinConfiguredRoot
     ) {
       return {
         valid: false,

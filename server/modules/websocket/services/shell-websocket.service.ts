@@ -101,6 +101,17 @@ type ShellWebSocketDependencies = {
     sessionId: string,
     provider: string,
   ) => string | null | undefined;
+  /**
+   * A shell's cwd isn't a containment boundary — once a shell exists it can
+   * `cd` anywhere the OS permits regardless of where it started, so this
+   * isn't the same kind of check `validateWorkspacePath` does. It exists so
+   * this feature can't be pointed at a path that was never legitimately
+   * registered as a project in the first place; the Shell tab only ever
+   * sends the path of an already-registered project (see the comment on
+   * the "missing project directory" test), so this should never reject
+   * normal usage.
+   */
+  isRegisteredProjectPath: (projectPath: string) => boolean;
   spawnPty?: typeof pty.spawn;
 };
 
@@ -383,6 +394,11 @@ export function handleShellConnection(
           }
         } catch {
           ws.send(JSON.stringify({ type: 'error', message: 'Invalid project path' }));
+          return;
+        }
+
+        if (!dependencies.isRegisteredProjectPath(resolvedProjectPath)) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Project is not registered' }));
           return;
         }
 

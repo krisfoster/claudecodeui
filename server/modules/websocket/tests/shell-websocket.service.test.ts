@@ -52,6 +52,7 @@ test('a stale socket close cannot detach the socket that replaced it', () => {
   const pty = createFakePty();
   const dependencies = {
     resolveProviderSessionId: () => null,
+    isRegisteredProjectPath: () => true,
     spawnPty: () => pty as never,
   };
   const initMessage = JSON.stringify({
@@ -89,6 +90,7 @@ test('shell output detects and normalizes a wrapped authentication URL', () => {
   const socket = createFakeSocket();
   const dependencies = {
     resolveProviderSessionId: () => null,
+    isRegisteredProjectPath: () => true,
     spawnPty: () => pty as never,
   };
 
@@ -124,6 +126,7 @@ test('bypassPermissions launches claude with --dangerously-skip-permissions', ()
   const spawnedCommands: string[] = [];
   const dependencies = {
     resolveProviderSessionId: () => null,
+    isRegisteredProjectPath: () => true,
     spawnPty: (_shell: string, args: string | string[]) => {
       spawnedCommands.push(Array.isArray(args) ? args[args.length - 1] : args);
       return createFakePty() as never;
@@ -164,6 +167,7 @@ test('bypassPermissions carries through to resumed claude sessions', () => {
   const spawnedCommands: string[] = [];
   const dependencies = {
     resolveProviderSessionId: () => 'resumed-session-id',
+    isRegisteredProjectPath: () => true,
     spawnPty: (_shell: string, args: string | string[]) => {
       spawnedCommands.push(Array.isArray(args) ? args[args.length - 1] : args);
       return createFakePty() as never;
@@ -198,6 +202,7 @@ test('a missing project directory is reported as an error frame and starts no pt
   let spawnCount = 0;
   const dependencies = {
     resolveProviderSessionId: () => null,
+    isRegisteredProjectPath: () => true,
     spawnPty: () => {
       spawnCount += 1;
       return createFakePty() as never;
@@ -223,5 +228,39 @@ test('a missing project directory is reported as an error frame and starts no pt
   assert.deepEqual(
     socket.frames.map((frame) => JSON.parse(frame) as Record<string, unknown>),
     [{ type: 'error', message: 'Invalid project path' }]
+  );
+});
+
+test('a real directory that is not a registered project is refused, without spawning a pty', () => {
+  const socket = createFakeSocket();
+  let spawnCount = 0;
+  const dependencies = {
+    resolveProviderSessionId: () => null,
+    isRegisteredProjectPath: () => false,
+    spawnPty: () => {
+      spawnCount += 1;
+      return createFakePty() as never;
+    },
+  };
+
+  handleShellConnection(socket as never, dependencies);
+  socket.emit(
+    'message',
+    JSON.stringify({
+      type: 'init',
+      // A real, existing directory — this proves the rejection comes from
+      // the registration check, not the earlier "does it exist" check.
+      projectPath: os.tmpdir(),
+      sessionId: `unregistered-path-${Date.now()}`,
+      hasSession: false,
+      provider: 'plain-shell',
+      isPlainShell: true,
+    })
+  );
+
+  assert.equal(spawnCount, 0);
+  assert.deepEqual(
+    socket.frames.map((frame) => JSON.parse(frame) as Record<string, unknown>),
+    [{ type: 'error', message: 'Project is not registered' }]
   );
 });
