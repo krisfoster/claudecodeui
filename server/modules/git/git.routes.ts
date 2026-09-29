@@ -15,6 +15,8 @@ type GitRouterDependencies = {
   fileSystem: typeof import('node:fs/promises');
   spawnProcess: typeof import('cross-spawn').default;
   resolveProjectPathById(projectId: string): string | null;
+  /** Same containment check createProject()/project-clone.service.ts already enforce — keeps this router's own path sanity-check from silently diverging from it again. */
+  validateProjectPath(projectPath: string): Promise<{ valid: boolean; error?: string; resolvedPath?: string }>;
   queryClaude: ProviderRunFunction;
   queryCursor: ProviderRunFunction;
 };
@@ -24,6 +26,7 @@ export function createGitRouter(dependencies: GitRouterDependencies): express.Ro
 const fs = dependencies.fileSystem;
 const spawn = dependencies.spawnProcess;
 const projectsDb = { getProjectPathById: dependencies.resolveProjectPathById };
+const validateWorkspacePath = dependencies.validateProjectPath;
 const queryClaudeSDK = dependencies.queryClaude;
 const spawnCursor = dependencies.queryCursor;
 const router = express.Router();
@@ -105,20 +108,25 @@ function validateRemoteName(remote) {
   return remote;
 }
 
-function validateProjectPath(projectPath) {
+// Delegates to the same validateWorkspacePath (server/shared/utils.ts)
+// createProject()/project-clone.service.ts already enforce, rather than
+// maintaining a second, narrower implementation — this file's own version
+// used to only reject the literal bare filesystem root, which already
+// silently diverged once from validateWorkspacePath's broader
+// FORBIDDEN_WORKSPACE_PATHS/WORKSPACES_ROOT handling. getActualProjectPath
+// is this function's only caller, already async, so full delegation is
+// a drop-in change.
+async function validateProjectPath(projectPath) {
   if (!projectPath || projectPath.includes('\0')) {
     throw new Error('Invalid project path');
   }
-  const resolved = path.resolve(projectPath);
-  // Must be an absolute path after resolution
-  if (!path.isAbsolute(resolved)) {
-    throw new Error('Invalid project path: must be absolute');
+
+  const validation = await validateWorkspacePath(projectPath);
+  if (!validation.valid || !validation.resolvedPath) {
+    throw new Error(`Invalid project path: ${validation.error || 'validation failed'}`);
   }
-  // Block obviously dangerous paths
-  if (resolved === '/' || resolved === path.sep) {
-    throw new Error('Invalid project path: root directory not allowed');
-  }
-  return resolved;
+
+  return validation.resolvedPath;
 }
 
 /**
@@ -135,7 +143,7 @@ async function getActualProjectPath(projectId) {
   if (!projectPath) {
     throw new Error(`Unable to resolve project path for "${projectId}"`);
   }
-  return validateProjectPath(projectPath);
+  return await validateProjectPath(projectPath);
 }
 
 // Helper function to strip git diff headers

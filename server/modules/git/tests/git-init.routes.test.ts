@@ -25,6 +25,7 @@ test('git init does not run when repository validation fails for an execution er
     fileSystem: { access: async () => undefined } as unknown as Parameters<typeof createGitRouter>[0]['fileSystem'],
     spawnProcess,
     resolveProjectPathById: () => '/workspace/repo',
+    validateProjectPath: async (projectPath) => ({ valid: true, resolvedPath: projectPath }),
     queryClaude: unexpectedProvider,
     queryCursor: unexpectedProvider,
   });
@@ -51,6 +52,40 @@ test('git init does not run when repository validation fails for an execution er
   assert.deepEqual(commands, [['rev-parse', '--is-inside-work-tree']]);
 });
 
+test('git init refuses a project path the injected validator rejects', async () => {
+  const unexpectedProvider = async (): Promise<never> => { throw new Error('unexpected provider call'); };
+  const router = createGitRouter({
+    fileSystem: { access: async () => undefined } as unknown as Parameters<typeof createGitRouter>[0]['fileSystem'],
+    spawnProcess: (() => { throw new Error('spawn should not run'); }) as unknown as Parameters<typeof createGitRouter>[0]['spawnProcess'],
+    resolveProjectPathById: () => '/etc',
+    validateProjectPath: async () => ({
+      valid: false,
+      error: 'Cannot use system-critical directories as workspace locations',
+    }),
+    queryClaude: unexpectedProvider,
+    queryCursor: unexpectedProvider,
+  });
+  const app = express();
+  app.use(express.json());
+  app.use('/api/git', router);
+  const server = app.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+
+  try {
+    const address = server.address() as AddressInfo;
+    const response = await fetch(`http://127.0.0.1:${address.port}/api/git/init`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ project: 'project-1' }),
+    });
+    const body = await response.json() as { success: boolean; error: string };
+    assert.equal(body.success, false);
+    assert.match(body.error, /Cannot use system-critical directories/);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
 test('delete branch parses force and uses Git force deletion', async () => {
   const commands: string[][] = [];
   const spawnProcess = ((_command: string, args: string[]) => {
@@ -74,6 +109,7 @@ test('delete branch parses force and uses Git force deletion', async () => {
     fileSystem: { access: async () => undefined } as unknown as Parameters<typeof createGitRouter>[0]['fileSystem'],
     spawnProcess,
     resolveProjectPathById: () => '/workspace/repo',
+    validateProjectPath: async (projectPath) => ({ valid: true, resolvedPath: projectPath }),
     queryClaude: unexpectedProvider,
     queryCursor: unexpectedProvider,
   });
@@ -110,6 +146,7 @@ test('delete branch rejects a non-boolean force value before running Git', async
     fileSystem: { access: async () => undefined } as unknown as Parameters<typeof createGitRouter>[0]['fileSystem'],
     spawnProcess,
     resolveProjectPathById: () => '/workspace/repo',
+    validateProjectPath: async (projectPath) => ({ valid: true, resolvedPath: projectPath }),
     queryClaude: unexpectedProvider,
     queryCursor: unexpectedProvider,
   });
