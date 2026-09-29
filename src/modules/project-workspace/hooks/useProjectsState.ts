@@ -695,9 +695,20 @@ export function useProjectsState({
     void hydrateProjectTaskMaster(selectedProject.projectId);
   }, [hydrateProjectTaskMaster, selectedProject?.projectId]);
 
-  // Auto-select the project when there is only one, so the user lands on the new session page
+  // Auto-select the CLOUDCLI_DEFAULT_PROJECT_PATH project when one is
+  // configured (e.g. a sandbox's extra mounted workspace), so it opens with
+  // no manual folder pick regardless of how many other projects exist.
+  // Otherwise, fall back to auto-selecting when there's only one project,
+  // so the user lands on the new session page.
   useEffect(() => {
-    if (!isLoadingProjects && projects.length === 1 && !selectedProject && !sessionId) {
+    if (isLoadingProjects || selectedProject || sessionId || projects.length === 0) {
+      return;
+    }
+
+    const defaultProject = projects.find((project) => project.isDefault);
+    if (defaultProject) {
+      setSelectedProject(defaultProject);
+    } else if (projects.length === 1) {
       setSelectedProject(projects[0]);
     }
   }, [isLoadingProjects, projects, selectedProject, sessionId]);

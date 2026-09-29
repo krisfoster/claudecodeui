@@ -101,6 +101,18 @@ test('a refresh that renames the selected project updates the selected copy', as
   assert.equal(result.current.projects[0].displayName, 'Renamed');
 });
 
+test('the isDefault project auto-selects even when other projects exist', async () => {
+  respondWith([
+    buildProject({ projectId: 'project-1', displayName: 'Manually added earlier' }),
+    buildProject({ projectId: 'project-2', displayName: 'Sandbox workspace', isDefault: true }),
+  ]);
+  const { result } = await renderProjectsState();
+
+  await waitFor(() => {
+    assert.equal(result.current.selectedProject?.projectId, 'project-2');
+  });
+});
+
 test('a refresh that changes nothing workspace-visible keeps the selected object identity', async () => {
   respondWith([buildProject()]);
   const { result } = await renderProjectsState();

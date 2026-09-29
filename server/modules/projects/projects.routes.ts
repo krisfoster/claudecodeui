@@ -70,6 +70,7 @@ router.get(
       skipSynchronization,
       sessionsLimit,
       sessionsOffset,
+      defaultProjectPath: process.env.CLOUDCLI_DEFAULT_PROJECT_PATH || undefined,
     });
     res.json(projects);
   }),

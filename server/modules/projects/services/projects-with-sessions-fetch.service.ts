@@ -5,7 +5,7 @@ import { projectsDb, sessionsDb } from '@/modules/database/index.js';
 import { sessionSynchronizerService } from '@/modules/providers/index.js';
 import { WS_OPEN_STATE, connectedClients } from '@/modules/websocket/index.js';
 import type { RealtimeClientConnection } from '@/shared/types.js';
-import { AppError } from '@/shared/utils.js';
+import { AppError, normalizeProjectPath } from '@/shared/utils.js';
 
 type SessionSummary = {
   id: string;
@@ -29,6 +29,8 @@ export type ProjectListItem = {
   displayName: string;
   fullPath: string;
   isStarred: boolean;
+  /** True for the one project registered from CLOUDCLI_DEFAULT_PROJECT_PATH — the client auto-opens it on load so a sandbox's extra mounted workspace never requires a manual folder pick. */
+  isDefault: boolean;
   sessions: SessionSummary[];
   sessionMeta: {
     hasMore: boolean;
@@ -51,6 +53,8 @@ type GetProjectsWithSessionsOptions = {
   skipSynchronization?: boolean;
   sessionsLimit?: number;
   sessionsOffset?: number;
+  /** Compared against each project's path to compute ProjectListItem.isDefault — read from process.env.CLOUDCLI_DEFAULT_PROJECT_PATH by the caller, never here, so this stays unit-testable. */
+  defaultProjectPath?: string;
 };
 
 type SessionPaginationOptions = {
@@ -63,6 +67,21 @@ type ProjectSessionsPageResult = {
   total: number;
   hasMore: boolean;
 };
+
+/**
+ * Both sides must already be realpath-resolved before calling this — the
+ * stored project path is resolved at registration time
+ * (validateWorkspacePath), so comparing against a raw, unresolved path
+ * would silently miscompare whenever either is a symlink (e.g. macOS's
+ * /tmp -> /private/tmp).
+ */
+export function isDefaultProjectPath(
+  resolvedProjectPath: string,
+  resolvedDefaultProjectPath: string | null,
+): boolean {
+  return resolvedDefaultProjectPath !== null
+    && normalizeProjectPath(resolvedProjectPath) === normalizeProjectPath(resolvedDefaultProjectPath);
+}
 
 export type ProjectSessionsPageApiView = {
   projectId: string;
@@ -193,6 +212,9 @@ export async function getProjectsWithSessions(
   const totalProjects = projectRows.length;
   const projects: ProjectListItem[] = [];
   let processedProjects = 0;
+  const resolvedDefaultProjectPath = options.defaultProjectPath
+    ? await fs.realpath(options.defaultProjectPath).catch(() => options.defaultProjectPath as string)
+    : null;
 
   for (const row of projectRows) {
     processedProjects += 1;
@@ -223,6 +245,7 @@ export async function getProjectsWithSessions(
       displayName,
       fullPath: projectPath,
       isStarred: Boolean(row.isStarred),
+      isDefault: isDefaultProjectPath(projectPath, resolvedDefaultProjectPath),
       sessions: sessionsPage.sessions,
       sessionMeta: {
         hasMore: sessionsPage.hasMore,
@@ -275,6 +298,7 @@ export async function getArchivedProjectsWithSessions(
       displayName,
       fullPath: row.project_path,
       isStarred: Boolean(row.isStarred),
+      isDefault: false,
       isArchived: true,
       sessions: sessionsPage.sessions,
       sessionMeta: {

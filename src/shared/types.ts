@@ -112,6 +112,8 @@ export type Project = {
   fullPath: string;
   path?: string;
   isStarred?: boolean;
+  /** True for the one project registered from CLOUDCLI_DEFAULT_PROJECT_PATH — see useProjectsState's auto-select effect. */
+  isDefault?: boolean;
   sessions?: ProjectSession[];
   sessionMeta?: ProjectSessionMeta;
   taskmaster?: ProjectTaskmasterInfo;
