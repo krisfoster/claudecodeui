@@ -49,7 +49,7 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p server/tsconfig.json",
     "test": "tsx --tsconfig server/tsconfig.json --test \"server/**/*.test.ts\" \"server/**/*.test.js\"",
-    "test:client": "vitest run",
+    "test:client": "cross-env NODE_OPTIONS=--no-experimental-webstorage vitest run",
     "lint": "oxlint src/ server/",
     "lint:server": "oxlint server/",
     "lint:client": "oxlint src/",
