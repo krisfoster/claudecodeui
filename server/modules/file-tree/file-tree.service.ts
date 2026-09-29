@@ -1,3 +1,4 @@
+import os from 'node:os';
 import path from 'node:path';
 
 import ignore from 'ignore';
@@ -101,12 +102,26 @@ function resolvePathInsideProject(projectRoot: string, targetPath: string): stri
   return resolvedPath;
 }
 
+/**
+ * '~' is meant as a sensible home-like starting point for browsing, not
+ * literally "the containment boundary" — when WORKSPACES_ROOT has been
+ * widened to a bare filesystem root (e.g. a sandbox's WORKSPACES_ROOT=/),
+ * that root is itself a hard-forbidden system path (FORBIDDEN_WORKSPACE_PATHS
+ * always blocks bare "/", registration or browsing alike, on purpose — see
+ * validateWorkspacePath), so expanding '~' to it made the folder browser's
+ * own default view permanently unbrowsable. Falling back to the real home
+ * directory in that one case keeps every other WORKSPACES_ROOT value's
+ * behavior unchanged.
+ */
 function expandWorkspacePath(workspaceRoot: string, inputPath: string): string {
+  const isBareFilesystemRoot = workspaceRoot === path.parse(workspaceRoot).root;
+  const homeLikeRoot = isBareFilesystemRoot ? os.homedir() : workspaceRoot;
+
   if (inputPath === '~') {
-    return workspaceRoot;
+    return homeLikeRoot;
   }
   if (inputPath.startsWith('~/') || inputPath.startsWith('~\\')) {
-    return path.join(workspaceRoot, inputPath.slice(2));
+    return path.join(homeLikeRoot, inputPath.slice(2));
   }
   return inputPath;
 }

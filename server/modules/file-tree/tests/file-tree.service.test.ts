@@ -403,7 +403,7 @@ test('createEntry performs filesystem mutation only through the injected adapter
  * which is the only way to exercise the read-only roots: the whole guarantee
  * rests on `realpath` resolving symlinks before the comparison.
  */
-function createRealFileSystemService(projectRoot: string): FileTreeServices {
+function createRealFileSystemService(projectRoot: string, workspaceRootPath: string = projectRoot): FileTreeServices {
   return createFileTreeService({
     fileSystem: {
       access: (candidatePath) => fsPromises.access(candidatePath),
@@ -428,7 +428,7 @@ function createRealFileSystemService(projectRoot: string): FileTreeServices {
     },
     projects: { getProjectPathById: async () => projectRoot },
     workspace: {
-      rootPath: projectRoot,
+      rootPath: workspaceRootPath,
       validatePath: (candidatePath) => validateWorkspacePath(candidatePath),
       resolveReadOnlyRootPath: (candidatePath) => resolveReadOnlyRootPath(candidatePath),
     },
@@ -529,5 +529,22 @@ test('reading through a symlink out of the temp directory is still refused', asy
     await fsPromises.rm(temporaryDirectory, { recursive: true, force: true });
     await fsPromises.rm(projectRoot, { recursive: true, force: true });
     await fsPromises.rm(outsideDirectory, { recursive: true, force: true });
+  }
+});
+
+test("browsing '~' falls back to the real home directory when the workspace root is a bare filesystem root", async () => {
+  const projectRoot = await fsPromises.mkdtemp(path.join(os.tmpdir(), 'file-tree-project-'));
+
+  try {
+    // '~' used to expand to the workspace root verbatim — fine normally,
+    // but a bare root ("/", the sandbox's WORKSPACES_ROOT=/ configuration)
+    // is itself hard-forbidden, so the folder browser's own default view
+    // was unbrowsable. It must fall back to a real, browsable directory.
+    const service = createRealFileSystemService(projectRoot, '/');
+    const browsed = await service.browseWorkspace('~');
+
+    assert.equal(browsed.path, await fsPromises.realpath(os.homedir()));
+  } finally {
+    await fsPromises.rm(projectRoot, { recursive: true, force: true });
   }
 });
