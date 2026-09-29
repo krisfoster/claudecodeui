@@ -61,6 +61,7 @@ function createDependencies(queryClaude: RunFunction): AgentDependencies {
     apiKeys: { validateApiKey: () => undefined },
     githubTokens: { getActiveGithubToken: () => null },
     projects: { createProjectPath: () => ({ outcome: 'created' }) },
+    validateProjectPath: async (projectPath) => ({ valid: true, resolvedPath: projectPath }),
     models: { getProviderModels: async () => ({ OPTIONS: [], DEFAULT: 'default-model' }) } as unknown as AgentDependencies['models'],
     sessions: {
       getSessionById: (sessionId) => sessionsDb.getSessionById(sessionId),

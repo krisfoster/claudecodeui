@@ -25,6 +25,8 @@ type AgentRouterDependencies = {
   apiKeys: { validateApiKey(apiKey: string): unknown };
   githubTokens: { getActiveGithubToken(userId: number): string | null };
   projects: { createProjectPath(projectPath: string, customName: string | null): unknown };
+  /** Same containment check createProject()/project-clone.service.ts already enforce — this route's direct-path branch must not bypass it. */
+  validateProjectPath(projectPath: string): Promise<{ valid: boolean; error?: string; resolvedPath?: string }>;
   models: typeof import('../providers/index.js').providerModelsService;
   /** The session gateway: an API run gets an app session row like a chat send, so the UI can list, open and subscribe to it. */
   sessions: {
@@ -55,6 +57,7 @@ export function createAgentRouter(dependencies: AgentRouterDependencies): expres
   const apiKeysDb = dependencies.apiKeys;
   const githubTokensDb = dependencies.githubTokens;
   const projectsDb = dependencies.projects;
+  const validateProjectPath = dependencies.validateProjectPath;
   const providerModelsService = dependencies.models;
   const sessionGateway = dependencies.sessions;
   const runRegistry = dependencies.runs;
@@ -944,8 +947,17 @@ export function createAgentRouter(dependencies: AgentRouterDependencies): expres
         finalProjectPath = clonedProject.path;
         clonedProjectCreated = clonedProject.created;
       } else {
-        // Use existing project path
-        finalProjectPath = normalizeProjectPath(path.resolve(projectPath));
+        // Use existing project path — this is an external, API-key
+        // -authenticated caller (a different trust boundary than a logged
+        // -in browser session), so it goes through the same containment
+        // check createProject()/project-clone.service.ts already enforce,
+        // rather than accepting any path that merely exists on disk.
+        const requestedProjectPath = normalizeProjectPath(path.resolve(projectPath));
+        const pathValidation = await validateProjectPath(requestedProjectPath);
+        if (!pathValidation.valid || !pathValidation.resolvedPath) {
+          throw new Error(pathValidation.error || 'Invalid project path');
+        }
+        finalProjectPath = pathValidation.resolvedPath;
 
         // Verify the path exists
         try {

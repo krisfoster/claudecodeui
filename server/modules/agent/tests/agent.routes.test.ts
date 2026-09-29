@@ -29,6 +29,7 @@ function createDependencies(
     apiKeys: { validateApiKey: () => undefined },
     githubTokens: { getActiveGithubToken: () => null },
     projects: { createProjectPath: () => ({ outcome: 'created' }) },
+    validateProjectPath: async (projectPath) => ({ valid: true, resolvedPath: projectPath }),
     models: {} as AgentDependencies['models'],
     sessions: {
       getSessionById: () => null,
@@ -251,4 +252,29 @@ test('Agent route starts codex on the catalog default when the request names no 
   });
 
   assert.deepEqual(codexCalls.map((call) => call.model), ['catalog-default']);
+});
+
+test('Agent route rejects a direct projectPath the injected validator refuses, without ever checking existence', async () => {
+  let accessCalled = false;
+  await withAgentServer(createDependencies({
+    fileSystem: {
+      access: async () => { accessCalled = true; },
+    } as unknown as AgentDependencies['fileSystem'],
+    validateProjectPath: async () => ({
+      valid: false,
+      error: 'Cannot use system-critical directories as workspace locations',
+    }),
+  }), async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/agent`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ projectPath: '/etc', message: 'Run', stream: false }),
+    });
+    const body = await response.json() as { success: boolean; error: string };
+
+    assert.equal(response.status, 500);
+    assert.equal(body.error, 'Cannot use system-critical directories as workspace locations');
+  });
+
+  assert.equal(accessCalled, false);
 });
