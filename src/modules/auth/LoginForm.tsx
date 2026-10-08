@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Loader2, Lock, User } from 'lucide-react';
@@ -19,6 +19,23 @@ const initialState: LoginFormState = {
 };
 
 /**
+ * A local dev sandbox's auto-created admin credentials are otherwise only
+ * discoverable by tailing a log file, so a launcher script (docker/sbx-kit's
+ * ccui-sbx) may open the login page with `?username=&password=` to prefill
+ * them. Read once on mount, never auto-submitted.
+ */
+function readCredentialsFromUrl(): LoginFormState {
+  if (typeof window === 'undefined') {
+    return initialState;
+  }
+  const params = new URLSearchParams(window.location.search);
+  return {
+    username: params.get('username') ?? '',
+    password: params.get('password') ?? '',
+  };
+}
+
+/**
  * Login form component.
  * Rendered by the auth module's ProtectedRoute when no user session exists.
  * Handles credential input with browser autofill support (`autocomplete`
@@ -28,9 +45,27 @@ export default function LoginForm() {
   const { t } = useTranslation('auth');
   const { error: sessionError, login } = useAuth();
 
-  const [formState, setFormState] = useState<LoginFormState>(initialState);
+  const [formState, setFormState] = useState<LoginFormState>(readCredentialsFromUrl);
   const [errorMessage, setErrorMessage] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Scrub prefilled credentials out of the address bar/history immediately —
+  // they should only ever live in the one URL the launcher opened, not
+  // linger there after the page has read them.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (!params.has('username') && !params.has('password')) {
+      return;
+    }
+    params.delete('username');
+    params.delete('password');
+    const remaining = params.toString();
+    window.history.replaceState(
+      null,
+      '',
+      `${window.location.pathname}${remaining ? `?${remaining}` : ''}${window.location.hash}`,
+    );
+  }, []);
 
   const updateField = useCallback((field: keyof LoginFormState, value: string) => {
     setFormState((previous) => ({ ...previous, [field]: value }));

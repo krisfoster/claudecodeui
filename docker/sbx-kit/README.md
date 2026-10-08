@@ -151,7 +151,16 @@ the kit entirely with env vars:
 CCUI_SBX_SERVER_PORT=13001 CCUI_SBX_CLIENT_PORT=15173 ccui-sbx .   # force specific host ports
 CCUI_SBX_NO_KIT=1 ccui-sbx .                                       # plain claude sandbox, ports only
 CCUI_SBX_ATTACH=1 ccui-sbx .                                       # attach to claude interactively
+CCUI_SBX_NO_OPEN=1 ccui-sbx .                                      # don't auto-open the browser
 ```
+
+Once headless mode is up, `ccui-sbx` also auto-opens the Vite client URL in
+your default browser (`open` on macOS, `xdg-open`/`wslview` on Linux/WSL —
+silently skipped if none of those exist). If a fresh admin account was just
+auto-created, the opened URL includes `?username=&password=`, which the
+login form reads once to prefill both fields and then immediately scrubs
+from the address bar/history — so the page comes up ready to just hit
+"Sign in." The password is also copied to your clipboard as a fallback.
 
 If a default or forced host port is already taken, `ccui-sbx` doesn't fail
 the launch — it lets `sbx` allocate an ephemeral port instead and reports
