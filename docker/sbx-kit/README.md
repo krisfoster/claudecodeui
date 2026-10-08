@@ -206,6 +206,41 @@ themselves work, but the plugin's own namespace prefix (e.g.
 `se-skills:sbx-diagnose` shows up as bare `sbx-diagnose`) and any
 `hooks.json` the plugin defines are not replicated.
 
+#### Importing your real Claude Code session history into the sandbox
+
+A sandbox also starts with no session history — none of your real Claude
+Code conversations, whether run from the terminal CLI or from **Claude
+Desktop's own "Claude Code" agent-mode feature** (both write the exact
+same `~/.claude/projects/<cwd-folder>/<session-id>.jsonl` format; Desktop
+isn't a separate storage system, just a different client writing to the
+same files).
+
+```bash
+CCUI_SBX_IMPORT_HOST_SESSIONS=1 ccui-sbx .
+# Or point at a different source directory instead of the real one:
+CCUI_SBX_IMPORT_HOST_SESSIONS=1 CCUI_SBX_HOST_SESSIONS_DIR="$HOME/.claude/projects" ccui-sbx .
+# Import-only, no write-back to your real history:
+CCUI_SBX_IMPORT_HOST_SESSIONS=1 CCUI_SBX_HOST_SESSIONS_READONLY=1 ccui-sbx .
+```
+
+The sessions directory (default `~/.claude/projects`) is mounted
+**read-write** and bind-mounted (not symlinked — claudecodeui's own
+session-discovery code doesn't follow symlinks, confirmed live) in as
+`~/.claude/projects/.imported-host-sessions`. claudecodeui's own session
+sync already does a full scan at boot and a live filesystem watch
+afterward, so existing history shows up immediately and anything written
+later — from either side — shows up within seconds, with no separate
+import step or background process. Read-write also means a session you
+run *inside* the sandbox against a project path that's already in your
+real history writes back into it too; set
+`CCUI_SBX_HOST_SESSIONS_READONLY=1` if you don't want that.
+
+**Importing history makes past conversations visible — it does not make
+that project's files browsable** from inside the sandbox unless you also
+mount that specific project directory (as the primary or an extra
+workspace, same as always). An imported project you haven't also mounted
+will show its conversation history but 404 on file-tree/terminal actions.
+
 ### Option B: raw `sbx run`/`sbx create`
 
 ```bash

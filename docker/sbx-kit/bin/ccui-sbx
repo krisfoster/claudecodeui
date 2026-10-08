@@ -54,6 +54,24 @@
 # own namespace prefix (e.g. "se-skills:sbx-diagnose" shows up as bare
 # "sbx-diagnose") and any hooks.json it defines are not wired up.
 #
+# CCUI_SBX_IMPORT_HOST_SESSIONS=1 mounts your real Claude Code session
+# history (~/.claude/projects by default — override with
+# CCUI_SBX_HOST_SESSIONS_DIR) into the sandbox, read-write, and the kit
+# bind-mounts it in as ~/.claude/projects/.imported-host-sessions (not a
+# symlink — claudecodeui's own session-discovery code doesn't follow
+# symlinks). This covers sessions from the terminal CLI *and* Claude Desktop's own
+# "Claude Code" feature — both write the exact same file format to the
+# exact same place. claudecodeui's own session sync already does a full
+# scan at boot plus a live filesystem watch afterward, so existing
+# history shows up immediately and anything written later (from either
+# side) shows up within seconds — no extra copying/import process.
+# Read-write also means a session you run *inside* the sandbox against a
+# project path already in your real history writes back into it too; set
+# CCUI_SBX_HOST_SESSIONS_READONLY=1 if you don't want that. Importing
+# history makes past conversations visible — it does not make that
+# project's files browsable unless you also mount that project directory
+# itself (as the primary or an extra workspace, same as always).
+#
 # A second bare positional path (e.g. `ccui-sbx . ~/claude_work/kb`) is
 # mounted as an extra workspace AND passed to the sandbox as
 # CLOUDCLI_DEFAULT_PROJECT_PATH, so the server registers it as a project
@@ -74,7 +92,7 @@
 set -euo pipefail
 
 usage() {
-  sed -n '2,72p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,89p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 if [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
@@ -328,6 +346,28 @@ if [ "${#skills_plugin_dirs[@]}" -gt 0 ]; then
   env_flags+=(--env "CLOUDCLI_EXTRA_SKILLS_DIRS=$joined_skills_dirs")
 fi
 
+# CCUI_SBX_IMPORT_HOST_SESSIONS=1 mounts your real Claude Code session
+# history into the sandbox (default ~/.claude/projects, override with
+# CCUI_SBX_HOST_SESSIONS_DIR) so the kit can symlink it in — read-write
+# unless CCUI_SBX_HOST_SESSIONS_READONLY=1. See spec.yaml for the
+# symlink step; the app's own session sync does the rest (full scan at
+# boot, live filesystem watch afterward), so this is the only new mount.
+host_sessions_mounts=()
+if [ "${CCUI_SBX_IMPORT_HOST_SESSIONS:-0}" = "1" ]; then
+  host_sessions_dir="${CCUI_SBX_HOST_SESSIONS_DIR:-$HOME/.claude/projects}"
+  resolved_sessions_dir="$(cd "$host_sessions_dir" >/dev/null 2>&1 && pwd || true)"
+  if [ -z "$resolved_sessions_dir" ]; then
+    echo "ccui-sbx: warning: CCUI_SBX_IMPORT_HOST_SESSIONS is set but the sessions dir doesn't exist, skipping: $host_sessions_dir" >&2
+  else
+    sessions_mount_spec="$resolved_sessions_dir"
+    if [ "${CCUI_SBX_HOST_SESSIONS_READONLY:-0}" = "1" ]; then
+      sessions_mount_spec="$resolved_sessions_dir:ro"
+    fi
+    host_sessions_mounts+=("$sessions_mount_spec")
+    env_flags+=(--env "CLOUDCLI_HOST_SESSIONS_DIR=$resolved_sessions_dir")
+  fi
+fi
+
 # Splice skills_plugin_mounts in right before a literal `--` in the
 # caller's own args (or at the end, if there is none) — never after, since
 # anything past `--` is AGENT_ARGS, not a workspace mount. Doing this also
@@ -359,6 +399,7 @@ if [ "${CCUI_SBX_ATTACH:-0}" = "1" ]; then
     "${env_flags[@]}" \
     "${pre_dashdash[@]}" \
     "${skills_plugin_mounts[@]}" \
+    "${host_sessions_mounts[@]}" \
     "${post_dashdash[@]}"
 fi
 
@@ -371,6 +412,7 @@ sbx run claude \
   --detached \
   "${pre_dashdash[@]}" \
   "${skills_plugin_mounts[@]}" \
+  "${host_sessions_mounts[@]}" \
   "${post_dashdash[@]}"
 
 echo
