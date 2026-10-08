@@ -166,6 +166,46 @@ If a default or forced host port is already taken, `ccui-sbx` doesn't fail
 the launch — it lets `sbx` allocate an ephemeral port instead and reports
 whatever port actually got used in the summary above.
 
+#### Setting defaults in `~/.ccui-sbx.yml`
+
+Any `CCUI_SBX_*` env var can be given a default in a user-level config file
+instead of re-typing it on every invocation — a real env var on the command
+line always wins over the file. It's a deliberately tiny flat subset of
+YAML (`key: value` lines only, no nesting/lists), parsed with no added
+dependency:
+
+```yaml
+# ~/.ccui-sbx.yml
+CCUI_SBX_SKILLS_PLUGINS: "~/.claude/plugins/cache/se-skills/se-skills/0.3.0"
+CCUI_SBX_NO_OPEN: "1"
+```
+
+A value starting with `~`/`~/` is tilde-expanded against `$HOME` (the file
+itself is never shell-evaluated, so the shell doesn't do this for you).
+Override the file's location with `CCUI_SBX_CONFIG=/path/to/file.yml`.
+
+#### Making your own Claude plugin skills available inside the sandbox
+
+A sandbox gets a brand-new, isolated `~/.claude` — it does not see your
+host's installed plugins (e.g. anything from the `hivemind` or `se-skills`
+marketplaces), since `sbx` has no mechanism to carry over a host's plugin
+install state. `CCUI_SBX_SKILLS_PLUGINS` works around this for the skills
+specifically (not the rest of a plugin — see caveat below):
+
+```bash
+CCUI_SBX_SKILLS_PLUGINS="$HOME/.claude/plugins/cache/se-skills/se-skills/0.3.0" ccui-sbx . ~/claude_work/kb
+# Colon-separate multiple plugin directories:
+CCUI_SBX_SKILLS_PLUGINS="$HOME/.claude/plugins/cache/se-skills/se-skills/0.3.0:$HOME/.claude/plugins/cache/hivemind/se-tools/1.1.13" ccui-sbx .
+```
+
+Each directory is mounted read-only, and every subfolder under its
+`skills/` gets symlinked into the sandbox's `~/.claude/skills/` — the same
+mechanism `sbx run --skills` already uses for a personal skills directory.
+This is a **flat skill copy, not a real plugin install**: the skills
+themselves work, but the plugin's own namespace prefix (e.g.
+`se-skills:sbx-diagnose` shows up as bare `sbx-diagnose`) and any
+`hooks.json` the plugin defines are not replicated.
+
 ### Option B: raw `sbx run`/`sbx create`
 
 ```bash
