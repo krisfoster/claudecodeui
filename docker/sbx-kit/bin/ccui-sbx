@@ -30,6 +30,14 @@
 #   CCUI_SBX_CLIENT_PORT   host port published to the Vite client (container :5173). Default 5173.
 #   CCUI_SBX_NO_KIT=1      skip attaching the claudecodeui-dev kit (plain claude sandbox + ports)
 #   CCUI_SBX_ATTACH=1      attach to the interactive claude session instead of running headless
+#   CCUI_SBX_NO_OPEN=1     don't auto-open the client URL in the default browser once it's up
+#
+# In headless mode, once the sandbox is up this also auto-opens the Vite
+# client URL in your default browser (macOS `open` / Linux `xdg-open` or
+# `wslview`; a no-op if none of those exist). If a fresh admin account was
+# just created, the opened URL carries ?username=&password= so the login
+# form prefills itself (then immediately scrubs the URL) — the password is
+# also copied to your clipboard (pbcopy/wl-copy/xclip/xsel) as a fallback.
 #
 # A second bare positional path (e.g. `ccui-sbx . ~/claude_work/kb`) is
 # mounted as an extra workspace AND passed to the sandbox as
@@ -97,6 +105,60 @@ port_in_use() {
     return $?
   fi
   ( : <"/dev/tcp/127.0.0.1/$port" ) >/dev/null 2>&1
+}
+
+# Best-effort cross-platform "open this URL in the default browser."
+# Silently does nothing if no known opener exists (e.g. a headless CI box)
+# or if CCUI_SBX_NO_OPEN=1 is set, since this is a convenience, not a
+# requirement — the URL is always printed regardless.
+open_url() {
+  local url="$1"
+  if [ "${CCUI_SBX_NO_OPEN:-0}" = "1" ]; then
+    return 0
+  fi
+  if command -v open >/dev/null 2>&1; then
+    open "$url" >/dev/null 2>&1 || true
+  elif command -v xdg-open >/dev/null 2>&1; then
+    xdg-open "$url" >/dev/null 2>&1 || true
+  elif command -v wslview >/dev/null 2>&1; then
+    wslview "$url" >/dev/null 2>&1 || true
+  fi
+}
+
+# Best-effort "copy this to the system clipboard" — macOS pbcopy, or
+# whichever Linux clipboard tool happens to be installed. Silently does
+# nothing if none is found; the password is always printed regardless.
+copy_to_clipboard() {
+  local text="$1"
+  if command -v pbcopy >/dev/null 2>&1; then
+    printf '%s' "$text" | pbcopy
+  elif command -v wl-copy >/dev/null 2>&1; then
+    printf '%s' "$text" | wl-copy
+  elif command -v xclip >/dev/null 2>&1; then
+    printf '%s' "$text" | xclip -selection clipboard
+  elif command -v xsel >/dev/null 2>&1; then
+    printf '%s' "$text" | xsel --clipboard --input
+  fi
+}
+
+# Percent-encode a string for use in a URL query value. Prefers jq (already
+# a soft dependency below, for parsing `sbx ports --json`); falls back to a
+# pure-bash loop so this still works without jq.
+urlencode() {
+  local s="$1"
+  if command -v jq >/dev/null 2>&1; then
+    jq -rn --arg v "$s" '$v|@uri'
+    return
+  fi
+  local out="" c i
+  for (( i=0; i<${#s}; i++ )); do
+    c="${s:i:1}"
+    case "$c" in
+      [a-zA-Z0-9.~_-]) out+="$c" ;;
+      *) out+="$(printf '%%%02X' "'$c")" ;;
+    esac
+  done
+  printf '%s' "$out"
 }
 
 # Build a --publish value for a given desired host port + container port.
@@ -244,6 +306,7 @@ fi
 echo
 if [ -n "$admin_password" ]; then
   echo "  Admin login:   ${admin_username:-admin} / $admin_password"
+  copy_to_clipboard "$admin_password"
 else
   echo "  (no auto-created admin found — sandbox may already have a user, or is still starting: sbx exec $sbx_name bash -lc 'tail -f /tmp/claudecodeui-dev.log')"
 fi
@@ -252,3 +315,22 @@ echo
 echo "  Attach to the claude agent:   sbx run --name $sbx_name"
 echo "  Tail the dev server logs:    sbx exec $sbx_name bash -lc 'tail -f /tmp/claudecodeui-dev.log'"
 echo "  Stop it:                     sbx stop $sbx_name"
+
+# The server's own root redirects to the literal string "http://localhost:5173"
+# (its own notion of "the client," which inside the sandbox is correct) — that
+# never resolves on the host, so always open the Vite client URL, never the
+# server/API one. CCUI_SBX_NO_OPEN=1 skips this.
+#
+# When we have a freshly auto-created admin password, pass it via
+# ?username=&password= — LoginForm.tsx reads and prefills from these once on
+# mount, then immediately scrubs them from the address bar/history, so the
+# plaintext password sits in the URL only for this one local navigation.
+# Also still copied to the clipboard above as a fallback for whatever opens
+# the link next (e.g. pasting it into a different browser/profile).
+if [ -n "$client_url" ]; then
+  open_target="$client_url"
+  if [ -n "$admin_password" ]; then
+    open_target="$client_url/?username=$(urlencode "${admin_username:-admin}")&password=$(urlencode "$admin_password")"
+  fi
+  open_url "$open_target"
+fi
