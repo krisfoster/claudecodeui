@@ -101,10 +101,79 @@ commands:
         done
         IFS="$old_ifs"
 
+    - path: /home/agent/.claude-mkdir-host-sessions.sh
+      mode: "0755"
+      content: |
+        #!/bin/sh
+        # Creates the bind-mount target as the agent user, before anything
+        # is mounted onto it, so it (and ~/.claude/projects itself, if this
+        # is the first thing to create it) end up agent-owned rather than
+        # root-owned — the actual mount happens in a separate root-run step
+        # (bind mounts need CAP_SYS_ADMIN), see .claude-mount-host-sessions.sh.
+        set -e
+        if [ -n "${CLOUDCLI_HOST_SESSIONS_DIR:-}" ]; then
+          mkdir -p "$HOME/.claude/projects/.imported-host-sessions"
+        fi
+
+    - path: /home/agent/.claude-mount-host-sessions.sh
+      mode: "0755"
+      content: |
+        #!/bin/sh
+        # ccui-sbx's CCUI_SBX_IMPORT_HOST_SESSIONS mounts the host's real
+        # Claude Code session history (default ~/.claude/projects, or
+        # CCUI_SBX_HOST_SESSIONS_DIR) and passes its mounted location here
+        # via CLOUDCLI_HOST_SESSIONS_DIR (unchanged, since a mount always
+        # lands at its exact host path).
+        #
+        # This is a real bind mount, NOT a symlink: claudecodeui's own
+        # session-discovery code (findFilesRecursivelyCreatedAfter in
+        # server/shared/utils.ts, and the chokidar watcher in
+        # sessions-watcher.service.ts, which sets followSymlinks: false)
+        # both use readdir()'s Dirent.isDirectory(), which is false for a
+        # symlink entry — a symlink here would be silently invisible to
+        # both the boot-time scan and the live watch. A bind mount makes
+        # the target a genuine directory entry, which both already handle
+        # correctly with no app code changes. Confirmed live: a symlink
+        # version found 0 session files via the app's own discovery path
+        # even though the content was reachable with `find -L`; the bind
+        # -mount version was found immediately and live-updated normally.
+        #
+        # One fixed, kit-owned mount point, not a per-project-folder
+        # loop — a real Claude-CLI project folder name is always derived
+        # from an absolute path (so always "-"-prefixed) and can never
+        # collide with a leading ".". Checking /proc/mounts first keeps
+        # re-running this idempotent (a container restart resets the
+        # mount namespace, so this legitimately needs to redo the mount
+        # then; re-running against an already-mounted target must not
+        # stack a second mount on top).
+        set -e
+        if [ -n "${CLOUDCLI_HOST_SESSIONS_DIR:-}" ]; then
+          # Not $HOME: this step runs as root, whose $HOME is /root, not
+          # /home/agent — the mkdir step above (which runs as agent, where
+          # $HOME is correct) already created the real target at this
+          # hardcoded path, so this must match it exactly, not re-derive it
+          # from the wrong user's $HOME.
+          target="/home/agent/.claude/projects/.imported-host-sessions"
+          if grep -qs " $target " /proc/mounts; then
+            echo "[claudecodeui] host sessions already mounted at $target"
+          else
+            mount --bind "$CLOUDCLI_HOST_SESSIONS_DIR" "$target"
+            echo "[claudecodeui] bind-mounted host sessions: $CLOUDCLI_HOST_SESSIONS_DIR -> $target"
+          fi
+        fi
+
   startup:
     - command: ["sh", "/home/agent/.claude-link-skills.sh"]
       user: "1000"
       description: "Symlink any mounted plugin skill directories into ~/.claude/skills"
+
+    - command: ["sh", "/home/agent/.claude-mkdir-host-sessions.sh"]
+      user: "1000"
+      description: "Create the host-sessions bind-mount target, agent-owned"
+
+    - command: ["sh", "/home/agent/.claude-mount-host-sessions.sh"]
+      user: "root"
+      description: "Bind-mount the host Claude Code sessions dir into ~/.claude/projects"
 
     - command: ["sh", "/home/agent/.claudecodeui-start.sh"]
       user: "1000"
