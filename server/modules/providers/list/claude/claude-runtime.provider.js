@@ -932,6 +932,28 @@ async function queryClaudeSDK(command, options = {}, ws, context) {
   let queryInstance = null;
 
   try {
+    // A project imported from history (CCUI_SBX_IMPORT_HOST_SESSIONS) has a
+    // real cwd recorded in its session, but that folder may never have been
+    // mounted into this environment. Node's spawn() then fails with ENOENT
+    // against the missing cwd, which the SDK's own error formatting
+    // misreports as "native binary ... exists but failed to launch" (it
+    // only checks that the executable file exists, not the cwd) — confirmed
+    // directly: spawning the same binary with a valid cwd exits 0, with a
+    // nonexistent one fails with ENOENT. Catch it here first so the error
+    // actually says what's wrong.
+    if (options.cwd) {
+      const cwdIsUsable = await fs
+        .stat(options.cwd)
+        .then((stats) => stats.isDirectory())
+        .catch(() => false);
+      if (!cwdIsUsable) {
+        throw new Error(
+          `This project's folder isn't available in this environment: ${options.cwd}. ` +
+            'Mount it as a workspace (or re-add the project pointing at a path that exists here) to use it.'
+        );
+      }
+    }
+
     const resolvedModel = await context.resolveResumeModel(sessionId, options.model);
     let effortModels = CLAUDE_PREDEFINED_MODELS;
     try {
