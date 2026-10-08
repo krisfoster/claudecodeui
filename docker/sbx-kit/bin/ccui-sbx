@@ -379,14 +379,22 @@ if [ "${CCUI_SBX_IMPORT_HOST_SESSIONS:-0}" = "1" ]; then
     # exactly what workspace_paths already captured above (same
     # pre-existing limitation: a path after the first flag isn't picked
     # up here either, consistent with CLOUDCLI_DEFAULT_PROJECT_PATH's own
-    # handling just above). The kit does the actual per-folder matching
-    # (see spec.yaml) since it needs to read file content to do it; this
-    # just passes through which paths count as "mounted."
+    # handling just above — if you need this filter to see an extra
+    # workspace, make sure it comes before any flag, same ordering
+    # CLOUDCLI_DEFAULT_PROJECT_PATH already requires). The kit does the
+    # actual per-folder matching (see spec.yaml) since it needs to read
+    # file content to do it; this just passes through which paths count
+    # as "mounted."
     if [ "${CCUI_SBX_HOST_SESSIONS_MOUNTED_ONLY:-0}" = "1" ]; then
       mounted_workspace_paths=()
       for workspace_path in "${workspace_paths[@]}"; do
         [ -d "$workspace_path" ] || continue
-        resolved_workspace_path="$(cd "$workspace_path" >/dev/null 2>&1 && pwd)"
+        # `pwd -P`, not a logical `pwd`: a session's recorded cwd is the
+        # kernel's physical getcwd() with symlinks already resolved, so
+        # comparing against a logical path would silently never match
+        # whenever this workspace has a symlinked ancestor (e.g. macOS's
+        # /tmp -> /private/tmp).
+        resolved_workspace_path="$(cd "$workspace_path" >/dev/null 2>&1 && pwd -P)"
         mounted_workspace_paths+=("$resolved_workspace_path")
       done
       if [ "${#mounted_workspace_paths[@]}" -gt 0 ]; then

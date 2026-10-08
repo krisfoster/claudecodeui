@@ -253,14 +253,31 @@ CCUI_SBX_IMPORT_HOST_SESSIONS=1 CCUI_SBX_HOST_SESSIONS_MOUNTED_ONLY=1 ccui-sbx .
 
 Only project folders whose sessions' own `cwd` is this sandbox's primary
 checkout or an extra mounted workspace (or a subdirectory of one) get
-imported — each mounted individually at its own natural
-`~/.claude/projects/<folder-name>`, not wrapped in `.imported-host
--sessions`. Since every imported project's real folder is then also
-mounted, the "history shows up but file-tree/terminal/git 404s" gap above
-doesn't apply to anything scoped this way. Matching happens per-folder,
-not per-session: if a folder has sessions from more than one `cwd` (e.g.
-sometimes run from a subdirectory), the whole folder is included as soon
-as any one of its sessions matches.
+imported — each still mounted individually under `.imported-host
+-sessions/<folder-name>`, not directly at `~/.claude/projects/<folder
+-name>`. The first version of this mounted directly, and an adversarial
+review caught a real bug: a folder name is deterministic from an
+absolute path, so it's identical to whatever the sandbox's own native
+in-container Claude Code usage would write for that same project —
+mounting directly over it would silently shadow any native session
+history already there for as long as the mount was active. Nesting under
+`.imported-host-sessions` avoids that collision entirely and loses
+nothing: which project a session belongs to comes from its own `cwd`
+field, never from where under `~/.claude/projects` the file physically
+sits, so file-tree/terminal/git still work for anything that matches,
+since that works off the project's own real (separately mounted)
+directory, not this transcript's location.
+
+Matching happens per-folder, not per-session: if a folder has sessions
+from more than one `cwd` (e.g. sometimes run from a subdirectory), the
+whole folder is included as soon as any one of its sessions matches.
+
+"Mounted workspace" means exactly what `ccui-sbx` already treats as a
+workspace path when it computes `CLOUDCLI_DEFAULT_PROJECT_PATH` — only
+bare positional paths that appear *before* the first flag are picked up.
+`ccui-sbx . --name foo ~/extra/path` silently won't see `~/extra/path`
+here even though `sbx` may still mount it; put extra workspaces before
+any flag if you want their history included.
 
 ### Option B: raw `sbx run`/`sbx create`
 
