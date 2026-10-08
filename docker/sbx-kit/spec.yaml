@@ -146,8 +146,84 @@ commands:
         # mount namespace, so this legitimately needs to redo the mount
         # then; re-running against an already-mounted target must not
         # stack a second mount on top).
+        #
+        # CLOUDCLI_HOST_SESSIONS_MOUNTED_ONLY=1 switches to a different,
+        # per-folder mode instead: only the project folders whose own
+        # sessions' cwd is this sandbox's primary checkout or an extra
+        # mounted workspace (CLOUDCLI_MOUNTED_WORKSPACE_PATHS, colon
+        # -joined) get bind-mounted — each at its own natural
+        # ~/.claude/projects/<folder-name>, reusing the host's own folder
+        # name verbatim (no collision risk, no name-encoding logic
+        # needed). cwd is sampled directly from each folder's own
+        # .jsonl content (the same ground truth the app's own
+        # synchronizer trusts) rather than re-deriving Claude's
+        # folder-name encoding, which collapses "/", ".", and "_" all to
+        # "-" and is lossy to reverse. Matching is "equal to or a
+        # descendant of" a mounted workspace, via a literal (non-glob)
+        # prefix strip — `${var#"$pattern"}` treats a quoted pattern as
+        # a literal string in POSIX sh/dash, confirmed empirically, so a
+        # workspace or cwd path containing glob-special characters
+        # (`*`, `?`, `[`) can't cause a false match.
         set -e
-        if [ -n "${CLOUDCLI_HOST_SESSIONS_DIR:-}" ]; then
+        path_matches_workspace() {
+          cwd_arg="$1"
+          workspace_arg="$2"
+          if [ "$workspace_arg" = "/" ] || [ "$cwd_arg" = "$workspace_arg" ]; then
+            return 0
+          fi
+          stripped="${cwd_arg#"$workspace_arg"/}"
+          [ "$stripped" != "$cwd_arg" ]
+        }
+
+        if [ -n "${CLOUDCLI_HOST_SESSIONS_DIR:-}" ] && [ -n "${CLOUDCLI_HOST_SESSIONS_MOUNTED_ONLY:-}" ]; then
+          for src in "$CLOUDCLI_HOST_SESSIONS_DIR"/*/; do
+            [ -d "$src" ] || continue
+            src="${src%/}"
+            folder_name="$(basename "$src")"
+            # Not $HOME, same reason as elsewhere in this script.
+            target="/home/agent/.claude/projects/$folder_name"
+
+            cwd=""
+            for jsonl in "$src"/*.jsonl; do
+              [ -f "$jsonl" ] || continue
+              match="$(grep -o '"cwd":"[^"]*"' "$jsonl" | head -n1)"
+              if [ -n "$match" ]; then
+                cwd="${match#\"cwd\":\"}"
+                cwd="${cwd%\"}"
+                break
+              fi
+            done
+            [ -n "$cwd" ] || continue
+            cwd="${cwd%/}"
+            [ -n "$cwd" ] || cwd="/"
+
+            matched=0
+            old_ifs="$IFS"
+            IFS=:
+            for workspace in $CLOUDCLI_MOUNTED_WORKSPACE_PATHS; do
+              IFS="$old_ifs"
+              [ -n "$workspace" ] || continue
+              workspace="${workspace%/}"
+              [ -n "$workspace" ] || workspace="/"
+              if path_matches_workspace "$cwd" "$workspace"; then
+                matched=1
+                IFS=:
+                break
+              fi
+              IFS=:
+            done
+            IFS="$old_ifs"
+            [ "$matched" = 1 ] || continue
+
+            if grep -qs " $target " /proc/mounts; then
+              echo "[claudecodeui] host sessions already mounted at $target"
+            else
+              mkdir -p "$target"
+              mount --bind "$src" "$target"
+              echo "[claudecodeui] bind-mounted host sessions (mounted-only): $src -> $target"
+            fi
+          done
+        elif [ -n "${CLOUDCLI_HOST_SESSIONS_DIR:-}" ]; then
           # Not $HOME: this step runs as root, whose $HOME is /root, not
           # /home/agent — the mkdir step above (which runs as agent, where
           # $HOME is correct) already created the real target at this
