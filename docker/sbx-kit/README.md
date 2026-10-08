@@ -241,6 +241,27 @@ mount that specific project directory (as the primary or an extra
 workspace, same as always). An imported project you haven't also mounted
 will show its conversation history but 404 on file-tree/terminal actions.
 
+#### Scoping the import to only your mounted projects
+
+By default, importing pulls in *every* project you've ever run Claude
+Code against — not just the one or two you're working on in this
+sandbox. `CCUI_SBX_HOST_SESSIONS_MOUNTED_ONLY=1` scopes it down:
+
+```bash
+CCUI_SBX_IMPORT_HOST_SESSIONS=1 CCUI_SBX_HOST_SESSIONS_MOUNTED_ONLY=1 ccui-sbx . ~/claude_work/kb
+```
+
+Only project folders whose sessions' own `cwd` is this sandbox's primary
+checkout or an extra mounted workspace (or a subdirectory of one) get
+imported — each mounted individually at its own natural
+`~/.claude/projects/<folder-name>`, not wrapped in `.imported-host
+-sessions`. Since every imported project's real folder is then also
+mounted, the "history shows up but file-tree/terminal/git 404s" gap above
+doesn't apply to anything scoped this way. Matching happens per-folder,
+not per-session: if a folder has sessions from more than one `cwd` (e.g.
+sometimes run from a subdirectory), the whole folder is included as soon
+as any one of its sessions matches.
+
 ### Option B: raw `sbx run`/`sbx create`
 
 ```bash

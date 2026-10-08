@@ -72,6 +72,13 @@
 # project's files browsable unless you also mount that project directory
 # itself (as the primary or an extra workspace, same as always).
 #
+# CCUI_SBX_HOST_SESSIONS_MOUNTED_ONLY=1 (with CCUI_SBX_IMPORT_HOST_SESSIONS=1)
+# scopes the import to only project folders whose sessions' cwd is this
+# sandbox's primary checkout or an extra mounted workspace (or a
+# subdirectory of one) — not your entire history. Since every imported
+# project's real folder is then also mounted, this avoids the "history
+# shows up but the file tree/terminal/git panel 404s" gap entirely.
+#
 # A second bare positional path (e.g. `ccui-sbx . ~/claude_work/kb`) is
 # mounted as an extra workspace AND passed to the sandbox as
 # CLOUDCLI_DEFAULT_PROJECT_PATH, so the server registers it as a project
@@ -92,7 +99,7 @@
 set -euo pipefail
 
 usage() {
-  sed -n '2,89p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,97p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 if [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
@@ -348,10 +355,10 @@ fi
 
 # CCUI_SBX_IMPORT_HOST_SESSIONS=1 mounts your real Claude Code session
 # history into the sandbox (default ~/.claude/projects, override with
-# CCUI_SBX_HOST_SESSIONS_DIR) so the kit can symlink it in — read-write
-# unless CCUI_SBX_HOST_SESSIONS_READONLY=1. See spec.yaml for the
-# symlink step; the app's own session sync does the rest (full scan at
-# boot, live filesystem watch afterward), so this is the only new mount.
+# CCUI_SBX_HOST_SESSIONS_DIR) so the kit can bind-mount it in — read-write
+# unless CCUI_SBX_HOST_SESSIONS_READONLY=1. See spec.yaml for the mount
+# step; the app's own session sync does the rest (full scan at boot, live
+# filesystem watch afterward), so this is the only new mount.
 host_sessions_mounts=()
 if [ "${CCUI_SBX_IMPORT_HOST_SESSIONS:-0}" = "1" ]; then
   host_sessions_dir="${CCUI_SBX_HOST_SESSIONS_DIR:-$HOME/.claude/projects}"
@@ -365,6 +372,31 @@ if [ "${CCUI_SBX_IMPORT_HOST_SESSIONS:-0}" = "1" ]; then
     fi
     host_sessions_mounts+=("$sessions_mount_spec")
     env_flags+=(--env "CLOUDCLI_HOST_SESSIONS_DIR=$resolved_sessions_dir")
+
+    # CCUI_SBX_HOST_SESSIONS_MOUNTED_ONLY=1 scopes the import to only the
+    # project folders whose sessions' own cwd is this sandbox's primary
+    # checkout or any extra mounted workspace — "mounted workspace" means
+    # exactly what workspace_paths already captured above (same
+    # pre-existing limitation: a path after the first flag isn't picked
+    # up here either, consistent with CLOUDCLI_DEFAULT_PROJECT_PATH's own
+    # handling just above). The kit does the actual per-folder matching
+    # (see spec.yaml) since it needs to read file content to do it; this
+    # just passes through which paths count as "mounted."
+    if [ "${CCUI_SBX_HOST_SESSIONS_MOUNTED_ONLY:-0}" = "1" ]; then
+      mounted_workspace_paths=()
+      for workspace_path in "${workspace_paths[@]}"; do
+        [ -d "$workspace_path" ] || continue
+        resolved_workspace_path="$(cd "$workspace_path" >/dev/null 2>&1 && pwd)"
+        mounted_workspace_paths+=("$resolved_workspace_path")
+      done
+      if [ "${#mounted_workspace_paths[@]}" -gt 0 ]; then
+        joined_workspace_paths="$(IFS=:; echo "${mounted_workspace_paths[*]}")"
+        env_flags+=(--env "CLOUDCLI_MOUNTED_WORKSPACE_PATHS=$joined_workspace_paths")
+        env_flags+=(--env "CLOUDCLI_HOST_SESSIONS_MOUNTED_ONLY=1")
+      else
+        echo "ccui-sbx: warning: CCUI_SBX_HOST_SESSIONS_MOUNTED_ONLY is set but no mounted workspace path was found, skipping filter" >&2
+      fi
+    fi
   fi
 fi
 
