@@ -39,6 +39,21 @@
 # form prefills itself (then immediately scrubs the URL) — the password is
 # also copied to your clipboard (pbcopy/wl-copy/xclip/xsel) as a fallback.
 #
+# Any CCUI_SBX_* env var can instead be set as a default in ~/.ccui-sbx.yml
+# (flat `KEY: value` lines; override the path with CCUI_SBX_CONFIG) so you
+# don't have to re-type it every run — a real env var always wins over the
+# file. Example ~/.ccui-sbx.yml:
+#   CCUI_SBX_SKILLS_PLUGINS: "~/.claude/plugins/cache/se-skills/se-skills/0.3.0"
+#
+# CCUI_SBX_SKILLS_PLUGINS="dir1:dir2" mounts one or more host Claude plugin
+# directories (e.g. ~/.claude/plugins/cache/se-skills/se-skills/0.3.0)
+# read-only, and the kit symlinks every skill under each one's skills/
+# subfolder into the sandbox's ~/.claude/skills/ — the same mechanism `sbx
+# run --skills` uses for your personal skills directory. This is a flat
+# skill copy, not a real plugin install: the skills work, but the plugin's
+# own namespace prefix (e.g. "se-skills:sbx-diagnose" shows up as bare
+# "sbx-diagnose") and any hooks.json it defines are not wired up.
+#
 # A second bare positional path (e.g. `ccui-sbx . ~/claude_work/kb`) is
 # mounted as an extra workspace AND passed to the sandbox as
 # CLOUDCLI_DEFAULT_PROJECT_PATH, so the server registers it as a project
@@ -59,7 +74,7 @@
 set -euo pipefail
 
 usage() {
-  sed -n '2,49p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,72p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 if [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
@@ -87,6 +102,54 @@ if ! command -v sbx >/dev/null 2>&1; then
   echo "ccui-sbx: 'sbx' CLI not found. Install Docker Sandboxes: https://docs.docker.com/ai/sandboxes/get-started/" >&2
   exit 1
 fi
+
+# Loads defaults for any of this script's CCUI_SBX_* env vars from a user
+# -level config file, so you don't have to re-type e.g.
+# CCUI_SBX_SKILLS_PLUGINS=... on every invocation. A real env var always
+# wins over the file, so one-off overrides on the command line still work.
+#
+# This is a deliberately tiny, flat subset of YAML (simple `key: value`
+# lines; no nesting, no lists, no anchors) — just enough for one-line env
+# var defaults, parsed with sed/grep so it works with no added dependency.
+# A value starting with `~` or `~/` is tilde-expanded against $HOME, since
+# the file isn't shell-evaluated so the shell never does this for us.
+load_user_config() {
+  local config_file="${CCUI_SBX_CONFIG:-$HOME/.ccui-sbx.yml}"
+  [ -f "$config_file" ] || return 0
+
+  local line key value
+  while IFS= read -r line || [ -n "$line" ]; do
+    line="${line%%#*}"
+    line="$(printf '%s' "$line" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+    [ -n "$line" ] || continue
+
+    case "$line" in
+      CCUI_SBX_*:*) ;;
+      *) continue ;;
+    esac
+
+    key="${line%%:*}"
+    key="$(printf '%s' "$key" | sed -e 's/[[:space:]]*$//')"
+    value="${line#*:}"
+    value="$(printf '%s' "$value" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+    # Strip one layer of matching quotes, if present.
+    case "$value" in
+      \"*\") value="${value#\"}"; value="${value%\"}" ;;
+      \'*\') value="${value#\'}"; value="${value%\'}" ;;
+    esac
+    case "$value" in
+      "~") value="$HOME" ;;
+      "~/"*) value="$HOME/${value#\~/}" ;;
+    esac
+
+    # A real env var always wins; only fill in what's genuinely unset.
+    if [ -z "${!key+x}" ]; then
+      export "$key=$value"
+    fi
+  done < "$config_file"
+}
+
+load_user_config
 
 SCRIPT_DIR="$(resolve_self)"
 KIT_DIR="$(cd "$SCRIPT_DIR/.." >/dev/null 2>&1 && pwd)"
@@ -235,6 +298,58 @@ if [ "${#workspace_paths[@]}" -ge 2 ] && [ -d "${workspace_paths[1]}" ]; then
   env_flags=(--env "CLOUDCLI_DEFAULT_PROJECT_PATH=$default_project_path")
 fi
 
+# CCUI_SBX_SKILLS_PLUGINS="dir1:dir2" — mount each host plugin directory
+# read-only (so the kit's startup script can symlink its skills/ subfolder
+# into ~/.claude/skills; see spec.yaml) and tell it which mounted paths to
+# look at via CLOUDCLI_EXTRA_SKILLS_DIRS (same colon-joined list, since a
+# mounted workspace always lands at its exact host path unchanged).
+skills_plugin_mounts=()
+skills_plugin_dirs=()
+if [ -n "${CCUI_SBX_SKILLS_PLUGINS:-}" ]; then
+  old_ifs="$IFS"
+  IFS=:
+  for plugin_dir in $CCUI_SBX_SKILLS_PLUGINS; do
+    IFS="$old_ifs"
+    [ -n "$plugin_dir" ] || continue
+    resolved_plugin_dir="$(cd "$plugin_dir" >/dev/null 2>&1 && pwd || true)"
+    if [ -z "$resolved_plugin_dir" ]; then
+      echo "ccui-sbx: warning: skills plugin dir not found, skipping: $plugin_dir" >&2
+      IFS=:
+      continue
+    fi
+    skills_plugin_mounts+=("$resolved_plugin_dir:ro")
+    skills_plugin_dirs+=("$resolved_plugin_dir")
+    IFS=:
+  done
+  IFS="$old_ifs"
+fi
+if [ "${#skills_plugin_dirs[@]}" -gt 0 ]; then
+  joined_skills_dirs="$(IFS=:; echo "${skills_plugin_dirs[*]}")"
+  env_flags+=(--env "CLOUDCLI_EXTRA_SKILLS_DIRS=$joined_skills_dirs")
+fi
+
+# Splice skills_plugin_mounts in right before a literal `--` in the
+# caller's own args (or at the end, if there is none) — never after, since
+# anything past `--` is AGENT_ARGS, not a workspace mount. Doing this also
+# keeps the caller's own leading positionals (their real primary/extra
+# workspace paths) in their original first/second position, since our
+# mounts are additional, never meant to be mistaken for the primary one.
+pre_dashdash=()
+post_dashdash=()
+seen_dashdash=0
+for arg in "$@"; do
+  if [ "$seen_dashdash" = 1 ]; then
+    post_dashdash+=("$arg")
+    continue
+  fi
+  if [ "$arg" = "--" ]; then
+    seen_dashdash=1
+    post_dashdash+=("$arg")
+    continue
+  fi
+  pre_dashdash+=("$arg")
+done
+
 if [ "${CCUI_SBX_ATTACH:-0}" = "1" ]; then
   exec sbx run claude \
     "${kit_flags[@]}" \
@@ -242,7 +357,9 @@ if [ "${CCUI_SBX_ATTACH:-0}" = "1" ]; then
     --publish "$client_publish" \
     "${name_flags[@]}" \
     "${env_flags[@]}" \
-    "$@"
+    "${pre_dashdash[@]}" \
+    "${skills_plugin_mounts[@]}" \
+    "${post_dashdash[@]}"
 fi
 
 sbx run claude \
@@ -252,7 +369,9 @@ sbx run claude \
   "${name_flags[@]}" \
   "${env_flags[@]}" \
   --detached \
-  "$@"
+  "${pre_dashdash[@]}" \
+  "${skills_plugin_mounts[@]}" \
+  "${post_dashdash[@]}"
 
 echo
 echo "── ccui-sbx: '$sbx_name' is running headless ──"

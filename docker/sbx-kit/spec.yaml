@@ -66,7 +66,46 @@ commands:
         echo "[claudecodeui] starting dev server (server :3001, vite :5173)..."
         nohup npm run dev >/tmp/claudecodeui-dev.log 2>&1 &
 
+    - path: /home/agent/.claude-link-skills.sh
+      mode: "0755"
+      content: |
+        #!/bin/sh
+        # ccui-sbx's CCUI_SBX_SKILLS_PLUGINS mounts one or more host Claude
+        # plugin directories read-only and passes their (unchanged, since a
+        # mount always lands at its exact host path) locations here via
+        # CLOUDCLI_EXTRA_SKILLS_DIRS, colon-joined. This is a flat skill
+        # copy, not a real plugin install: every subfolder under each
+        # plugin's skills/ gets symlinked into ~/.claude/skills/ — the same
+        # mechanism `sbx run --skills` uses for a personal skills directory
+        # — but the plugin's own namespace prefix and any hooks.json it
+        # defines are not replicated.
+        set -e
+        mkdir -p "$HOME/.claude/skills"
+        old_ifs="$IFS"
+        IFS=:
+        for plugin_dir in ${CLOUDCLI_EXTRA_SKILLS_DIRS:-}; do
+          IFS="$old_ifs"
+          [ -n "$plugin_dir" ] || continue
+          if [ ! -d "$plugin_dir/skills" ]; then
+            echo "[claudecodeui] no skills/ dir in mounted plugin, skipping: $plugin_dir"
+            IFS=:
+            continue
+          fi
+          for skill_dir in "$plugin_dir"/skills/*/; do
+            [ -d "$skill_dir" ] || continue
+            skill_name="$(basename "${skill_dir%/}")"
+            ln -sfn "${skill_dir%/}" "$HOME/.claude/skills/$skill_name"
+            echo "[claudecodeui] linked skill: $skill_name -> ${skill_dir%/}"
+          done
+          IFS=:
+        done
+        IFS="$old_ifs"
+
   startup:
+    - command: ["sh", "/home/agent/.claude-link-skills.sh"]
+      user: "1000"
+      description: "Symlink any mounted plugin skill directories into ~/.claude/skills"
+
     - command: ["sh", "/home/agent/.claudecodeui-start.sh"]
       user: "1000"
       background: true
