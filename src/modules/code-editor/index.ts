@@ -3,3 +3,4 @@ export { useEditorSidebar } from '@/modules/code-editor/hooks/useEditorSidebar';
 export { default as MarkdownPreview } from '@/modules/code-editor/markdown/MarkdownPreview';
 export { default as MermaidDiagram } from '@/modules/code-editor/markdown/MermaidDiagram';
 export { default as D3Sandbox } from '@/modules/code-editor/markdown/D3Sandbox';
+export { default as VegaLiteChart } from '@/modules/code-editor/markdown/VegaLiteChart';
