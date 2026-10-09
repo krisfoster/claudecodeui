@@ -56,6 +56,7 @@
 
 - **Responsive Design** - Works seamlessly across desktop, tablet, and mobile so you can also use Agents from mobile 
 - **Interactive Chat Interface** - Built-in chat interface for seamless communication with the Agents
+- **Rich Chat Rendering** - Mermaid diagrams, Vega-Lite charts, sandboxed D3.js visualizations, and sortable/filterable tables render directly inline in chat. [See how →](#rich-chat-rendering)
 - **Integrated Shell Terminal** - Direct access to the Agents CLI through built-in shell functionality
 - **File Explorer** - Interactive file tree with syntax highlighting and live editing
 - **Git Explorer** - View, stage and commit your changes. You can also switch branches 
@@ -65,6 +66,19 @@
 - **TaskMaster AI Integration** *(Optional)* - Advanced project management with AI-powered task planning, PRD parsing, and workflow automation
 - **Model Compatibility** - Works with Claude and GPT model families (the full list of supported models is available at runtime via `GET /api/providers/:provider/models`)
 
+
+## Rich Chat Rendering
+
+The chat transcript renders a few fenced code block languages inline instead of as plain text. The agent is told about all of these automatically (every session's system prompt is extended with this list, so it prefers them over writing a standalone HTML file into your repo when you ask for a diagram or chart), but this is useful if you're writing a fence by hand or want to know the exact constraints.
+
+| Fence | Renders as | Fence body | Constraints |
+|---|---|---|---|
+| ` ```mermaid ` | Diagram (flowchart, sequence diagram, ER diagram, etc.) | Raw [Mermaid](https://mermaid.js.org/) syntax | Runs client-side, strict security level (no script/click injection in labels) |
+| ` ```vega-lite ` | Chart | A complete [Vega-Lite](https://vega.github.io/vega-lite/) JSON spec | Inline data under `data.values` — nothing fetches a remote `data.url` |
+| ` ```d3 ` | Custom visualization | The body of `function render(container, d3, width, height) { ... }` — not a full script or HTML document | Runs sandboxed in an iframe with **no network access and no access to the page**; inline any data directly in the code |
+| GFM table (`\| col \| col \|`) | Sortable, filterable table | Standard Markdown table syntax | None — this is just a nicer renderer for ordinary Markdown tables |
+
+On parse failure, an incomplete fence (still streaming), or a render error, each of these falls back to showing the raw fence source rather than a blank space or a hard error.
 
 ## Quick Start
 
