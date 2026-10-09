@@ -93,6 +93,13 @@ const UNIFIED_TOOL_LABELS: Record<string, string> = {
   AskUserQuestion: 'Question',
 };
 
+const IMAGE_FILE_EXTENSIONS = /\.(png|jpe?g|gif|webp|svg|bmp|ico|avif)$/i;
+
+/** Whether a `Read` call's `file_path` points at an image, so its result can render inline instead of being hidden as a plain file read. */
+export function isImageFilePath(filePath: unknown): boolean {
+  return typeof filePath === 'string' && IMAGE_FILE_EXTENSIONS.test(filePath.trim());
+}
+
 export function formatToolDisplayName(toolName: string): string {
   const unifiedLabel = UNIFIED_TOOL_LABELS[toolName];
   if (unifiedLabel) {
@@ -801,7 +808,7 @@ export function getToolConfig(toolName: string): ToolDisplayConfig {
 /**
  * Check if a tool result should be hidden
  */
-export function shouldHideToolResult(toolName: string, toolResult: any): boolean {
+export function shouldHideToolResult(toolName: string, toolResult: any, toolInput?: any): boolean {
   const config = getToolConfig(toolName);
 
   if (!config.result) return false;
@@ -809,6 +816,11 @@ export function shouldHideToolResult(toolName: string, toolResult: any): boolean
   // Hidden/success-only configs suppress noisy successful output, but errors
   // still need to be visible so failed tool calls are diagnosable.
   if (toolResult?.isError) return false;
+
+  // Read's result is hidden by default (the file content itself has nowhere
+  // useful to render), but a Read of an image is the one case worth showing:
+  // the model can only describe the image in text otherwise.
+  if (toolName === 'Read' && isImageFilePath(toolInput?.file_path)) return false;
 
   // Always hidden
   if (config.result.hidden) return true;

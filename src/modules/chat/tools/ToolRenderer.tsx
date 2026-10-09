@@ -1,7 +1,8 @@
 import React, { memo, useMemo, useCallback } from 'react';
 
 import type { DiffLine, Project,ToolStatus } from '@/shared/types';
-import { formatToolDisplayName, getToolConfig } from '@/modules/chat/tools/configs/toolConfigs';
+import { formatToolDisplayName, getToolConfig, isImageFilePath } from '@/modules/chat/tools/configs/toolConfigs';
+import { MarkdownImage } from '@/modules/chat/transcript/MarkdownImage';
 import { OneLineDisplay } from '@/modules/chat/tools/OneLineDisplay';
 import { BashCommandDisplay } from '@/modules/chat/tools/BashCommandDisplay';
 import { CollapsibleDisplay } from '@/modules/chat/tools/CollapsibleDisplay';
@@ -144,6 +145,18 @@ export const ToolRenderer: React.FC<ToolRendererProps> = memo(({
         // badge marks errors and the output expands via the chevron.
         defaultOpen={false}
       />
+    );
+  }
+
+  // A Read of an image has nothing useful to show as the usual hidden/text
+  // result — render the image itself instead, reusing the same workspace-path
+  // blob-fetch + lightbox the model's own markdown image references use.
+  if (toolName === 'Read' && mode === 'result' && isImageFilePath(toolInput?.file_path)) {
+    const filePath = String(toolInput.file_path);
+    return (
+      <div className="border-l-2 border-l-border my-1 py-0.5 pl-3">
+        <MarkdownImage src={filePath} alt={filePath.split('/').pop()} />
+      </div>
     );
   }
 
