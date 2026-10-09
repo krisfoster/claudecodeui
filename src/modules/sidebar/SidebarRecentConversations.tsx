@@ -96,6 +96,11 @@ export default function SidebarRecentConversations({
     );
   }
 
+  const projectUnavailableLabel = t(
+    'recent.projectUnavailable',
+    "This project's folder isn't available here — opening it will fail.",
+  );
+
   return (
     <div className="px-1" data-testid="recent-conversations-list">
       <div className="flex items-center justify-between px-2 pb-1.5 pt-0.5">
@@ -179,16 +184,10 @@ export default function SidebarRecentConversations({
                   </span>
                   <span className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[10px] leading-3 text-muted-foreground">
                     {!conversation.isProjectPathAvailable && (
-                      <Tooltip
-                        content={t(
-                          'recent.projectUnavailable',
-                          "This project's folder isn't available here — opening it will fail.",
-                        )}
-                        position="top"
-                      >
+                      <Tooltip content={projectUnavailableLabel} position="top">
                         <FolderX
                           className="h-3 w-3 flex-shrink-0 text-amber-600 dark:text-amber-400"
-                          aria-label={t('recent.projectUnavailable', "This project's folder isn't available here")}
+                          aria-label={projectUnavailableLabel}
                         />
                       </Tooltip>
                     )}

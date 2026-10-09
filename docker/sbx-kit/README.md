@@ -332,3 +332,14 @@ depends on the actual kernel (bind mounts, `mountpoint`, CAP_SYS_ADMIN
 under `commands.startup` specifically rather than an interactive `sbx
 exec`) or the real `claude` CLI's own behavior (e.g. that `--resume`
 actually finds a session at the path these tests assert it lands at).
+
+One gap specifically worth flagging: the harness runs every script as a
+single OS user, with no simulation of the real `user: "1000"` vs.
+`user: "root"` split these steps rely on — so a permissions/ownership bug
+across that split (root creating a file or directory the agent user later
+can't write to) isn't something this suite can catch on its own, even
+with 30 passing tests. `chown`/`mkdir` calls meant for the root-run steps
+are faked so their *invocation* can still be asserted on (see
+`chownLog` in the test harness), but nothing here enforces that an agent
+-owned step could actually have performed the equivalent write — that
+needs an occasional live check too.

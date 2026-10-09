@@ -328,3 +328,32 @@ test('a mount failure for one session does not abort the rest of the scan', () =
     result.cleanup();
   }
 });
+
+test('every project folder is chowned to the agent uid, not left root-owned', () => {
+  // Regression test: this step runs as root (bind mounts need
+  // CAP_SYS_ADMIN), so `mkdir -p "$natural_folder"` creates that folder as
+  // root. Unlike the files mounted inside it, the folder itself is never
+  // overlaid by a mount, so it stays root-owned forever unless chowned —
+  // which silently blocked the agent's own native `claude` CLI from ever
+  // writing a *new* file into a project folder that had an imported
+  // session mounted into it. Reproduced directly in a real container
+  // before this fix; this only verifies the script *attempts* the chown
+  // (real chown needs root, which this harness isn't), since the
+  // ownership-enforcement itself is kernel behavior, not shell logic.
+  const result = runKitScript(SCRIPT, {
+    setup: (root) => buildSessionsFixture(path.join(root, 'sessions')),
+    env: (root) => ({ CLOUDCLI_HOST_SESSIONS_DIR: path.join(root, 'sessions') }),
+  });
+  try {
+    const expectedFolders = ['-folder-A', '-folder-C', '-folder-E', '-folder-F'];
+    for (const folder of expectedFolders) {
+      const natural = homeAgentPath(result, '.claude', 'projects', folder);
+      assert.ok(
+        result.chownLog.some((line) => line === `1000:1000 ${natural}`),
+        `expected a chown of ${natural}, got: ${result.chownLog.join(' | ')}`,
+      );
+    }
+  } finally {
+    result.cleanup();
+  }
+});
