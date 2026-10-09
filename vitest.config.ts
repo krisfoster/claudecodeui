@@ -1,10 +1,12 @@
 import { fileURLToPath, URL } from 'node:url';
 import { defineConfig } from 'vitest/config';
+import { d3BundlePlugin } from './shared/d3BundlePlugin.js';
 
 // The client test suite runs under jsdom because the hook and component tests
 // added alongside the state refactor rely on real effects, DOM events and
 // localStorage — none of which run under react-dom/server.
 export default defineConfig({
+  plugins: [d3BundlePlugin()],
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),
@@ -23,7 +25,7 @@ export default defineConfig({
       VITE_IS_PLATFORM: 'false',
     },
     setupFiles: ['./vitest.setup.ts'],
-    include: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
+    include: ['src/**/*.test.ts', 'src/**/*.test.tsx', 'shared/**/*.test.js'],
     restoreMocks: true,
   },
 });
