@@ -1,4 +1,4 @@
-import { Loader2, MessageSquare } from 'lucide-react';
+import { FolderX, Loader2, MessageSquare } from 'lucide-react';
 import type { MouseEvent } from 'react';
 import type { TFunction } from 'i18next';
 
@@ -171,10 +171,27 @@ export default function SidebarRecentConversations({
                 </span>
 
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate text-[13px] font-normal leading-4">
+                  <span className={cn(
+                    'block truncate text-[13px] font-normal leading-4',
+                    !conversation.isProjectPathAvailable && 'text-muted-foreground',
+                  )}>
                     {conversation.sessionTitle}
                   </span>
                   <span className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[10px] leading-3 text-muted-foreground">
+                    {!conversation.isProjectPathAvailable && (
+                      <Tooltip
+                        content={t(
+                          'recent.projectUnavailable',
+                          "This project's folder isn't available here — opening it will fail.",
+                        )}
+                        position="top"
+                      >
+                        <FolderX
+                          className="h-3 w-3 flex-shrink-0 text-amber-600 dark:text-amber-400"
+                          aria-label={t('recent.projectUnavailable', "This project's folder isn't available here")}
+                        />
+                      </Tooltip>
+                    )}
                     <span className="truncate">{conversation.projectDisplayName}</span>
                     {isProcessing ? (
                       <>

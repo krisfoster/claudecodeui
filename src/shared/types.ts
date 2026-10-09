@@ -1524,7 +1524,10 @@ export type ArchivedSessionListItem = {
 export type RecentConversationListItem = Pick<
   ArchivedSessionListItem,
   'sessionId' | 'provider' | 'projectId' | 'projectDisplayName' | 'sessionTitle' | 'lastActivity'
->;
+> & {
+  /** False when the session's own project path doesn't exist on this host/sandbox — opening it will fail. */
+  isProjectPathAvailable: boolean;
+};
 
 /**
  * The rename the sidebar currently has open, if any.

@@ -224,16 +224,35 @@ CCUI_SBX_IMPORT_HOST_SESSIONS=1 CCUI_SBX_HOST_SESSIONS_READONLY=1 ccui-sbx .
 ```
 
 The sessions directory (default `~/.claude/projects`) is mounted
-**read-write** and bind-mounted (not symlinked — claudecodeui's own
-session-discovery code doesn't follow symlinks, confirmed live) in as
-`~/.claude/projects/.imported-host-sessions`. claudecodeui's own session
-sync already does a full scan at boot and a live filesystem watch
-afterward, so existing history shows up immediately and anything written
-later — from either side — shows up within seconds, with no separate
-import step or background process. Read-write also means a session you
-run *inside* the sandbox against a project path that's already in your
-real history writes back into it too; set
-`CCUI_SBX_HOST_SESSIONS_READONLY=1` if you don't want that.
+**read-write**, and each session is bind-mounted **individually** at its
+own natural `~/.claude/projects/<folder-name>/<session-id>.jsonl` — not a
+symlink (claudecodeui's own session-discovery code doesn't follow
+symlinks, confirmed live), and not nested under any wrapper directory.
+That second part matters more than it sounds: an earlier version of this
+nested every imported session under one `.imported-host-sessions`
+directory to dodge a folder-name collision, and that broke *resuming*
+any imported session. The real `claude` CLI's own `--resume <session-id>`
+does its own internal lookup from `cwd`, using the same folder-name
+encoding claudecodeui's sync ignores — it has no idea a wrapper exists,
+so it looks at the natural path and fails with "No conversation found",
+even though the conversation's history was already visible and
+browsable. Confirmed directly: copying a nested session's `.jsonl` to its
+natural path made `--resume` work immediately; nested, it failed with
+that exact message every time. Per-session mounting fixes this and
+removes the need for the wrapper in the first place — a session id is a
+UUID, so a host-imported file colliding with a pre-existing native one
+would mean the exact same id existing twice, not just the same project
+folder. A session's subagent/tool-result artifacts (a sibling directory
+named after its own session id) are mounted too when present, so a
+resumed session that used subagents or workflows still has them.
+
+claudecodeui's own session sync already does a full scan at boot and a
+live filesystem watch afterward, so existing history shows up
+immediately and anything written later — from either side — shows up
+within seconds, with no separate import step or background process.
+Read-write also means a session you run *inside* the sandbox against a
+project path that's already in your real history writes back into it
+too; set `CCUI_SBX_HOST_SESSIONS_READONLY=1` if you don't want that.
 
 **Importing history makes past conversations visible — it does not make
 that project's files browsable** from inside the sandbox unless you also
@@ -251,26 +270,14 @@ sandbox. `CCUI_SBX_HOST_SESSIONS_MOUNTED_ONLY=1` scopes it down:
 CCUI_SBX_IMPORT_HOST_SESSIONS=1 CCUI_SBX_HOST_SESSIONS_MOUNTED_ONLY=1 ccui-sbx . ~/claude_work/kb
 ```
 
-Only project folders whose sessions' own `cwd` is this sandbox's primary
-checkout or an extra mounted workspace (or a subdirectory of one) get
-imported — each still mounted individually under `.imported-host
--sessions/<folder-name>`, not directly at `~/.claude/projects/<folder
--name>`. The first version of this mounted directly, and an adversarial
-review caught a real bug: a folder name is deterministic from an
-absolute path, so it's identical to whatever the sandbox's own native
-in-container Claude Code usage would write for that same project —
-mounting directly over it would silently shadow any native session
-history already there for as long as the mount was active. Nesting under
-`.imported-host-sessions` avoids that collision entirely and loses
-nothing: which project a session belongs to comes from its own `cwd`
-field, never from where under `~/.claude/projects` the file physically
-sits, so file-tree/terminal/git still work for anything that matches,
-since that works off the project's own real (separately mounted)
-directory, not this transcript's location.
-
-Matching happens per-folder, not per-session: if a folder has sessions
-from more than one `cwd` (e.g. sometimes run from a subdirectory), the
-whole folder is included as soon as any one of its sessions matches.
+Only *sessions* (not whole folders) whose own `cwd` is this sandbox's
+primary checkout or an extra mounted workspace (or a subdirectory of
+one) get mounted — checked per session, not per folder, so a project
+folder with sessions from two different working directories no longer
+has to resolve that as all-or-nothing the way an earlier, folder-level
+version of this did. Since every imported project's real folder is then
+also mounted, this doesn't just filter noise — the file-tree/terminal
+/git gap mentioned above doesn't apply to anything scoped this way.
 
 "Mounted workspace" means exactly what `ccui-sbx` already treats as a
 workspace path when it computes `CLOUDCLI_DEFAULT_PROJECT_PATH` — only
@@ -302,3 +309,26 @@ sbx exec ccui-dev bash -lc 'tail -f /tmp/claudecodeui-install.log /tmp/claudecod
 Note: `commands.startup` kits can only be applied at sandbox creation time
 (`sbx create --kit` / `sbx run --kit`) — `sbx kit add` on an existing
 sandbox is not supported for kits that declare startup commands.
+
+## Testing this kit
+
+```bash
+npm run test:sbx-kit
+```
+
+Runs `docker/sbx-kit/tests/*.test.ts` against this kit's actual shipped
+code — `ccui-sbx` as a real subprocess (against a stubbed `sbx` that just
+records its argv) and each `spec.yaml` shell script extracted and run
+against disposable fixtures (with `mount`/`mountpoint` faked, so no
+root/CAP_SYS_ADMIN is needed). These aren't a hand-copied approximation:
+a change to the shipped script or `spec.yaml` is what these tests exercise
+directly, so they fail the moment the two diverge.
+
+This covers everything that's practical to check without a real sandbox —
+arg splicing, env threading, the `~/.ccui-sbx.yml` loader, and the mount
+-matching/idempotency/failure-handling logic. It does not replace an
+occasional live check in a real sandbox (`ccui-sbx .`) for anything that
+depends on the actual kernel (bind mounts, `mountpoint`, CAP_SYS_ADMIN
+under `commands.startup` specifically rather than an interactive `sbx
+exec`) or the real `claude` CLI's own behavior (e.g. that `--resume`
+actually finds a session at the path these tests assert it lands at).

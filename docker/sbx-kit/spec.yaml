@@ -105,14 +105,15 @@ commands:
       mode: "0755"
       content: |
         #!/bin/sh
-        # Creates the bind-mount target as the agent user, before anything
-        # is mounted onto it, so it (and ~/.claude/projects itself, if this
-        # is the first thing to create it) end up agent-owned rather than
-        # root-owned — the actual mount happens in a separate root-run step
-        # (bind mounts need CAP_SYS_ADMIN), see .claude-mount-host-sessions.sh.
+        # Ensures the real ~/.claude/projects parent exists as the agent
+        # user, before the root-run mount step (which needs CAP_SYS_ADMIN)
+        # creates any per-project subfolders under it — otherwise a fresh
+        # sandbox's first such subfolder would be created by root, and the
+        # agent's own native `claude` CLI needs to create sibling project
+        # folders there later.
         set -e
         if [ -n "${CLOUDCLI_HOST_SESSIONS_DIR:-}" ]; then
-          mkdir -p "$HOME/.claude/projects/.imported-host-sessions"
+          mkdir -p "$HOME/.claude/projects"
         fi
 
     - path: /home/agent/.claude-mount-host-sessions.sh
@@ -125,71 +126,83 @@ commands:
         # via CLOUDCLI_HOST_SESSIONS_DIR (unchanged, since a mount always
         # lands at its exact host path).
         #
-        # This is a real bind mount, NOT a symlink: claudecodeui's own
-        # session-discovery code (findFilesRecursivelyCreatedAfter in
-        # server/shared/utils.ts, and the chokidar watcher in
-        # sessions-watcher.service.ts, which sets followSymlinks: false)
-        # both use readdir()'s Dirent.isDirectory(), which is false for a
-        # symlink entry — a symlink here would be silently invisible to
-        # both the boot-time scan and the live watch. A bind mount makes
-        # the target a genuine directory entry, which both already handle
-        # correctly with no app code changes. Confirmed live: a symlink
-        # version found 0 session files via the app's own discovery path
-        # even though the content was reachable with `find -L`; the bind
-        # -mount version was found immediately and live-updated normally.
+        # Each session is bind-mounted INDIVIDUALLY, at its own natural
+        # ~/.claude/projects/<folder-name>/<session-id>.jsonl — not a
+        # symlink, and not nested under a wrapper directory. Two things
+        # forced this, both found by testing the actual behavior rather
+        # than assuming it:
         #
-        # One fixed, kit-owned mount point, not a per-project-folder
-        # loop — a real Claude-CLI project folder name is always derived
-        # from an absolute path (so always "-"-prefixed) and can never
-        # collide with a leading ".". Checking /proc/mounts first keeps
-        # re-running this idempotent (a container restart resets the
-        # mount namespace, so this legitimately needs to redo the mount
-        # then; re-running against an already-mounted target must not
-        # stack a second mount on top).
+        # 1. A symlink is invisible to claudecodeui's own session-discovery
+        #    code: findFilesRecursivelyCreatedAfter (server/shared/utils.ts)
+        #    and the chokidar watcher (sessions-watcher.service.ts, which
+        #    sets followSymlinks: false) both use readdir()'s
+        #    Dirent.isDirectory(), false for a symlink entry. A bind mount
+        #    is a genuine directory/file entry, so both already handle it
+        #    correctly with no app code changes.
         #
-        # CLOUDCLI_HOST_SESSIONS_MOUNTED_ONLY=1 switches to a different,
-        # per-folder mode instead: only the project folders whose own
-        # sessions' cwd is this sandbox's primary checkout or an extra
-        # mounted workspace (CLOUDCLI_MOUNTED_WORKSPACE_PATHS, colon
-        # -joined) get bind-mounted — each still nested under
-        # .imported-host-sessions/<folder-name>, NOT directly at
-        # ~/.claude/projects/<folder-name>. That second option was tried
-        # first and an adversarial review caught a real bug in it: a
-        # folder name is deterministic from an absolute path, so it's
-        # identical to whatever the sandbox's own native in-container
-        # Claude Code usage would write for that same project — mounting
-        # directly over it would silently shadow any native session
-        # history already there for as long as the mount is active.
-        # Nesting avoids this exactly like the non-filtered mode already
-        # does, and loses nothing: which project a session belongs to
-        # comes from its own cwd field (sampled below), never from where
-        # under ~/.claude/projects the file physically sits, so file
-        # -tree/terminal/git still work for anything that matches, since
-        # that works off the project's own real (separately mounted)
-        # directory, not this transcript's location.
+        # 2. Nesting everything under one `.imported-host-sessions` wrapper
+        #    (tried first, to dodge a folder-name collision with the
+        #    sandbox's own native session folders) breaks RESUMING any
+        #    imported session: the real `claude` CLI's own `--resume
+        #    <session-id>` does its own internal lookup from `cwd`, using
+        #    the exact same folder-name encoding, and has no idea the
+        #    wrapper exists — it looks at the natural, non-nested path and
+        #    reports "No conversation found". Confirmed directly: copying
+        #    a nested session's .jsonl to its natural path made `--resume`
+        #    work immediately; left nested, it failed with that exact
+        #    message every time. claudecodeui's own sync could already
+        #    find and list the nested file fine — only the native CLI's
+        #    resume lookup needed the natural path, which is why this
+        #    surfaced as "browsing history works, continuing a chat
+        #    doesn't" rather than an import-time error.
         #
-        # cwd is sampled directly from each folder's own .jsonl content
-        # (the same ground truth the app's own synchronizer trusts)
-        # rather than re-deriving Claude's folder-name encoding, which
-        # collapses "/", ".", and "_" all to "-" and is lossy to reverse.
-        # Matching is "equal to or a descendant of" a mounted workspace,
-        # via a literal (non-glob) prefix strip — `${var#"$pattern"}`
-        # treats a quoted pattern as a literal string in POSIX sh/dash,
-        # confirmed empirically, so a workspace or cwd path containing
-        # glob-special characters (`*`, `?`, `[`) can't cause a false
-        # match. CLOUDCLI_MOUNTED_WORKSPACE_PATHS entries are resolved
-        # with `pwd -P` (ccui-sbx), not a logical `pwd`, since a session's
+        # Per-session-file mounting also resolves the collision concern
+        # that nesting was trying to solve in the first place, without the
+        # wrapper: a session id is a UUID, so a host-imported file and a
+        # pre-existing native file can only ever collide by naming the
+        # exact same session — astronomically unlikely — rather than by
+        # sharing a project folder, which is the collision nesting was
+        # guarding against. Any sibling file already in that project
+        # folder (native or otherwise) is simply untouched.
+        #
+        # A session's subagent/tool-result artifacts (created under a
+        # directory named after its own session id, sitting next to the
+        # .jsonl — e.g. <folder>/<session-id>/subagents/...) are mounted
+        # too when present, so a resumed session that used subagents or
+        # workflows still has them.
+        #
+        # CLOUDCLI_HOST_SESSIONS_MOUNTED_ONLY=1 scopes this to only
+        # sessions whose own cwd is this sandbox's primary checkout or an
+        # extra mounted workspace (CLOUDCLI_MOUNTED_WORKSPACE_PATHS,
+        # colon-joined) — now checked per SESSION rather than per folder,
+        # which is strictly more precise than the original per-folder
+        # approximation (a folder with sessions from two different cwds no
+        # longer has to choose one for the whole folder). cwd is sampled
+        # directly from each session's own .jsonl content (the same
+        # ground truth the app's own synchronizer trusts) rather than
+        # re-deriving Claude's folder-name encoding, which collapses "/",
+        # ".", and "_" all to "-" and is lossy to reverse. Matching is
+        # "equal to or a descendant of" a mounted workspace, via a literal
+        # (non-glob) prefix strip — `${var#"$pattern"}` treats a quoted
+        # pattern as a literal string in POSIX sh/dash, confirmed
+        # empirically, so a workspace or cwd path containing glob-special
+        # characters (`*`, `?`, `[`) can't cause a false match.
+        # CLOUDCLI_MOUNTED_WORKSPACE_PATHS entries are resolved with
+        # `pwd -P` (ccui-sbx), not a logical `pwd`, since a session's
         # recorded cwd is the kernel's physical getcwd() with symlinks
         # already resolved — a logical path would silently never match
         # its own history whenever a mounted workspace has a symlinked
         # ancestor (e.g. macOS's /tmp -> /private/tmp).
         #
-        # Each mount attempt is guarded so one failure doesn't abort the
-        # whole scan: under `set -e`, dash (confirmed empirically) aborts
-        # an entire script on ANY failing command inside a for loop, not
-        # just that iteration — without the guard, one bad mount would
-        # silently skip every folder later in the glob's iteration order.
+        # Each mount is checked with `mountpoint -q` first (idempotent
+        # across restarts — a container restart resets the mount
+        # namespace, so this legitimately needs to redo every mount then)
+        # and guarded so one failure doesn't abort the whole scan: under
+        # `set -e`, dash (confirmed empirically) aborts an entire script
+        # on any failing command inside a for loop, not just that
+        # iteration.
         set -e
+
         path_matches_workspace() {
           cwd_arg="$1"
           workspace_arg="$2"
@@ -200,70 +213,85 @@ commands:
           [ "$stripped" != "$cwd_arg" ]
         }
 
-        if [ -n "${CLOUDCLI_HOST_SESSIONS_DIR:-}" ] && [ -n "${CLOUDCLI_HOST_SESSIONS_MOUNTED_ONLY:-}" ]; then
-          for src in "$CLOUDCLI_HOST_SESSIONS_DIR"/*/; do
-            [ -d "$src" ] || continue
-            src="${src%/}"
-            folder_name="$(basename "$src")"
-            # Not $HOME, same reason as elsewhere in this script.
-            target="/home/agent/.claude/projects/.imported-host-sessions/$folder_name"
-
-            cwd=""
-            for jsonl in "$src"/*.jsonl; do
-              [ -f "$jsonl" ] || continue
-              match="$(grep -o -m1 '"cwd":"[^"]*"' "$jsonl" | head -n1)"
-              if [ -n "$match" ]; then
-                cwd="${match#\"cwd\":\"}"
-                cwd="${cwd%\"}"
-                break
-              fi
-            done
-            [ -n "$cwd" ] || continue
-            cwd="${cwd%/}"
-            [ -n "$cwd" ] || cwd="/"
-
-            matched=0
-            old_ifs="$IFS"
-            IFS=:
-            for workspace in $CLOUDCLI_MOUNTED_WORKSPACE_PATHS; do
-              IFS="$old_ifs"
-              [ -n "$workspace" ] || continue
-              workspace="${workspace%/}"
-              [ -n "$workspace" ] || workspace="/"
-              if path_matches_workspace "$cwd" "$workspace"; then
-                matched=1
-                IFS=:
-                break
-              fi
-              IFS=:
-            done
-            IFS="$old_ifs"
-            [ "$matched" = 1 ] || continue
-
-            if mountpoint -q "$target" 2>/dev/null; then
-              echo "[claudecodeui] host sessions already mounted at $target"
-            else
-              mkdir -p "$target"
-              if mount --bind "$src" "$target"; then
-                echo "[claudecodeui] bind-mounted host sessions (mounted-only): $src -> $target"
-              else
-                echo "[claudecodeui] warning: failed to bind-mount $src -> $target, skipping" >&2
-              fi
-            fi
-          done
-        elif [ -n "${CLOUDCLI_HOST_SESSIONS_DIR:-}" ]; then
-          # Not $HOME: this step runs as root, whose $HOME is /root, not
-          # /home/agent — the mkdir step above (which runs as agent, where
-          # $HOME is correct) already created the real target at this
-          # hardcoded path, so this must match it exactly, not re-derive it
-          # from the wrong user's $HOME.
-          target="/home/agent/.claude/projects/.imported-host-sessions"
-          if mountpoint -q "$target" 2>/dev/null; then
-            echo "[claudecodeui] host sessions already mounted at $target"
-          else
-            mount --bind "$CLOUDCLI_HOST_SESSIONS_DIR" "$target"
-            echo "[claudecodeui] bind-mounted host sessions: $CLOUDCLI_HOST_SESSIONS_DIR -> $target"
+        # True (0) when this session should be mounted: always, unless
+        # CLOUDCLI_HOST_SESSIONS_MOUNTED_ONLY is set, in which case only
+        # when this session's own cwd is under a mounted workspace.
+        session_matches_filter() {
+          jsonl="$1"
+          if [ -z "${CLOUDCLI_HOST_SESSIONS_MOUNTED_ONLY:-}" ]; then
+            return 0
           fi
+
+          cwd="$(grep -o -m1 '"cwd":"[^"]*"' "$jsonl" | head -n1)"
+          cwd="${cwd#\"cwd\":\"}"
+          cwd="${cwd%\"}"
+          [ -n "$cwd" ] || return 1
+          cwd="${cwd%/}"
+          [ -n "$cwd" ] || cwd="/"
+
+          old_ifs="$IFS"
+          IFS=:
+          for workspace in $CLOUDCLI_MOUNTED_WORKSPACE_PATHS; do
+            IFS="$old_ifs"
+            [ -n "$workspace" ] || continue
+            workspace="${workspace%/}"
+            [ -n "$workspace" ] || workspace="/"
+            if path_matches_workspace "$cwd" "$workspace"; then
+              IFS=:
+              return 0
+            fi
+            IFS=:
+          done
+          IFS="$old_ifs"
+          return 1
+        }
+
+        # Bind-mounts $1 onto $2, creating $2 first (a directory or an
+        # empty file, matching $1's type — a file bind mount needs an
+        # existing file as its target). Idempotent; logs and returns
+        # non-zero on failure rather than aborting the caller's loop.
+        bind_mount_once() {
+          src="$1"
+          target="$2"
+          if mountpoint -q "$target" 2>/dev/null; then
+            return 0
+          fi
+          if [ -d "$src" ]; then
+            mkdir -p "$target"
+          else
+            mkdir -p "$(dirname "$target")"
+            touch "$target"
+          fi
+          if mount --bind "$src" "$target" 2>/dev/null; then
+            return 0
+          fi
+          echo "[claudecodeui] warning: failed to bind-mount $src -> $target, skipping" >&2
+          return 1
+        }
+
+        if [ -n "${CLOUDCLI_HOST_SESSIONS_DIR:-}" ]; then
+          for project_dir in "$CLOUDCLI_HOST_SESSIONS_DIR"/*/; do
+            [ -d "$project_dir" ] || continue
+            project_dir="${project_dir%/}"
+            folder_name="$(basename "$project_dir")"
+            # Not $HOME: this step runs as root, whose $HOME is /root, not
+            # /home/agent.
+            natural_folder="/home/agent/.claude/projects/$folder_name"
+
+            for jsonl in "$project_dir"/*.jsonl; do
+              [ -f "$jsonl" ] || continue
+              session_matches_filter "$jsonl" || continue
+
+              session_id="$(basename "$jsonl" .jsonl)"
+              mkdir -p "$natural_folder"
+              bind_mount_once "$jsonl" "$natural_folder/$session_id.jsonl" || continue
+
+              artifacts_dir="$project_dir/$session_id"
+              if [ -d "$artifacts_dir" ]; then
+                bind_mount_once "$artifacts_dir" "$natural_folder/$session_id"
+              fi
+            done
+          done
         fi
 
   startup:

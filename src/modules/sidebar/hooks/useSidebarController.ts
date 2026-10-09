@@ -97,7 +97,11 @@ export function useSidebarController({
   // otherwise stack. See PendingSidebarDeletion.
   const [pendingDeletion, setPendingDeletion] = useState<PendingSidebarDeletion | null>(null);
   const [showVersionModal, setShowVersionModal] = useState(false);
-  const [searchMode, setSearchMode] = useState<SidebarSearchMode>('projects');
+  // 'conversations' (flat, chat-first, most-recent-first across every
+  // project) is the default landing view — a project-grouped tree buries
+  // the chat itself under a folder heading, and for a sandbox importing
+  // host session history that folder may not even be usable here.
+  const [searchMode, setSearchMode] = useState<SidebarSearchMode>('conversations');
   const [conversationResults, setConversationResults] = useState<ConversationSearchResults | null>(null);
   const [isSearching, setIsSearching] = useState(false);
   const [searchProgress, setSearchProgress] = useState<SearchProgress | null>(null);
