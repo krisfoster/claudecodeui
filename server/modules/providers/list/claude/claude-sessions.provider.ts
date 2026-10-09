@@ -835,19 +835,21 @@ function isInternalContent(content: string): boolean {
 }
 
 /**
- * When Read downscales a large image for the model, the CLI injects a
- * standalone assistant turn carrying only this caption — not part of the
- * tool_result, not something the model wrote, just a coordinate-mapping note
- * for its own benefit (e.g. `[Image: original 2972x1440, displayed at
- * 2000x969. Multiply coordinates by 1.49 to map to original image.]`). The
- * model's real reply always follows in a separate assistant turn right after,
- * so dropping this one loses nothing user-visible — confirmed live against
- * the Claude CLI's actual stream-json output for a Read of an oversized PNG.
+ * When Read downscales a large image for the model, the SDK injects this
+ * caption as its own standalone **user**-role turn (`isSynthetic: true`,
+ * confirmed directly against the SDK's own live message stream for a Read of
+ * an oversized PNG) — not part of the tool_result, and not something a human
+ * typed, just a coordinate-mapping note for the model's own benefit (e.g.
+ * `[Image: original 2972x1440, displayed at 2000x969. Multiply coordinates
+ * by 1.49 to map to original image.]`). The model's real reply always
+ * follows in a separate assistant turn right after, so dropping this one
+ * loses nothing user-visible. Gated on `isSynthetic` as well as the content
+ * pattern so a human who happened to paste matching text is never dropped.
  */
 const IMAGE_DIMENSION_CAPTION = /^\[Image: original \d+x\d+, displayed at \d+x\d+\. Multiply coordinates by [\d.]+ to map to original image\.\]$/;
 
-function isImageDimensionCaption(content: string): boolean {
-  return IMAGE_DIMENSION_CAPTION.test(content.trim());
+function isSyntheticImageDimensionCaption(content: string, isSynthetic: unknown): boolean {
+  return isSynthetic === true && IMAGE_DIMENSION_CAPTION.test(content.trim());
 }
 
 /**
@@ -1240,6 +1242,7 @@ export class ClaudeSessionsProvider implements IProviderSessions {
             if (
               (parsedFiles.text || parsedFiles.attachments.length > 0)
               && !isInternalContent(parsedFiles.text)
+              && !isSyntheticImageDimensionCaption(parsedFiles.text, raw.isSynthetic)
             ) {
               messages.push(createNormalizedMessage({
                 id: `${baseId}_text_${partIndex}`,
@@ -1266,7 +1269,7 @@ export class ClaudeSessionsProvider implements IProviderSessions {
             .map((part: AnyRecord) => part.text)
             .filter(Boolean)
             .join('\n');
-          if (textParts && !isInternalContent(textParts)) {
+          if (textParts && !isInternalContent(textParts) && !isSyntheticImageDimensionCaption(textParts, raw.isSynthetic)) {
             messages.push(createNormalizedMessage({
               id: `${baseId}_text`,
               sessionId,
@@ -1434,7 +1437,7 @@ export class ClaudeSessionsProvider implements IProviderSessions {
       if (Array.isArray(raw.message.content)) {
         let partIndex = 0;
         for (const part of raw.message.content) {
-          if (part.type === 'text' && part.text && !isImageDimensionCaption(part.text)) {
+          if (part.type === 'text' && part.text) {
             messages.push(createNormalizedMessage({
               id: `${baseId}_${partIndex}`,
               sessionId,
@@ -1467,7 +1470,7 @@ export class ClaudeSessionsProvider implements IProviderSessions {
           }
           partIndex++;
         }
-      } else if (typeof raw.message.content === 'string' && !isImageDimensionCaption(raw.message.content)) {
+      } else if (typeof raw.message.content === 'string') {
         messages.push(createNormalizedMessage({
           id: baseId,
           sessionId,
