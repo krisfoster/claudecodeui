@@ -835,6 +835,22 @@ function isInternalContent(content: string): boolean {
 }
 
 /**
+ * When Read downscales a large image for the model, the CLI injects a
+ * standalone assistant turn carrying only this caption — not part of the
+ * tool_result, not something the model wrote, just a coordinate-mapping note
+ * for its own benefit (e.g. `[Image: original 2972x1440, displayed at
+ * 2000x969. Multiply coordinates by 1.49 to map to original image.]`). The
+ * model's real reply always follows in a separate assistant turn right after,
+ * so dropping this one loses nothing user-visible — confirmed live against
+ * the Claude CLI's actual stream-json output for a Read of an oversized PNG.
+ */
+const IMAGE_DIMENSION_CAPTION = /^\[Image: original \d+x\d+, displayed at \d+x\d+\. Multiply coordinates by [\d.]+ to map to original image\.\]$/;
+
+function isImageDimensionCaption(content: string): boolean {
+  return IMAGE_DIMENSION_CAPTION.test(content.trim());
+}
+
+/**
  * Claude wraps local slash-command metadata in lightweight XML-like tags inside
  * a plain string payload. We intentionally parse only the small tag surface we
  * care about instead of introducing a generic XML parser for untrusted history.
@@ -1418,7 +1434,7 @@ export class ClaudeSessionsProvider implements IProviderSessions {
       if (Array.isArray(raw.message.content)) {
         let partIndex = 0;
         for (const part of raw.message.content) {
-          if (part.type === 'text' && part.text) {
+          if (part.type === 'text' && part.text && !isImageDimensionCaption(part.text)) {
             messages.push(createNormalizedMessage({
               id: `${baseId}_${partIndex}`,
               sessionId,
@@ -1451,7 +1467,7 @@ export class ClaudeSessionsProvider implements IProviderSessions {
           }
           partIndex++;
         }
-      } else if (typeof raw.message.content === 'string') {
+      } else if (typeof raw.message.content === 'string' && !isImageDimensionCaption(raw.message.content)) {
         messages.push(createNormalizedMessage({
           id: baseId,
           sessionId,
