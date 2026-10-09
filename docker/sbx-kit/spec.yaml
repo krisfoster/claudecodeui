@@ -283,7 +283,22 @@ commands:
               session_matches_filter "$jsonl" || continue
 
               session_id="$(basename "$jsonl" .jsonl)"
+              # mkdir runs as root (this whole step does), so the folder
+              # itself — unlike the files mounted inside it — is never
+              # overlaid by anything that would replace its ownership, and
+              # stays root-owned forever unless fixed here. That silently
+              # blocked the agent's own native `claude` CLI from ever
+              # writing a *new* file into this project folder again — e.g.
+              # a session run fresh against this same project, or a
+              # subagent-artifacts directory created for the first time on
+              # a resumed session — confirmed by reproducing the exact
+              # permission-denied failure. `|| true`: chown needs real
+              # privilege, which this step always has in a real sandbox
+              # (root), but not when this script runs unprivileged (as it
+              # does under the test harness) — the folder still gets
+              # created there, just not re-owned, which is fine for a test.
               mkdir -p "$natural_folder"
+              chown 1000:1000 "$natural_folder" 2>/dev/null || true
               bind_mount_once "$jsonl" "$natural_folder/$session_id.jsonl" || continue
 
               artifacts_dir="$project_dir/$session_id"

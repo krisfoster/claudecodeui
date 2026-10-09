@@ -52,6 +52,8 @@ export type RunKitScriptResult = {
   /** Root of the fixture filesystem this run operated in — inspect this for assertions, then call cleanup(). */
   root: string;
   mountLog: string[];
+  /** Every `chown OWNER:GROUP TARGET` invocation, in order — real chown needs root, which the test harness isn't, so this is how a script's chown *attempts* are verified without actually needing that privilege. */
+  chownLog: string[];
   /** Removes the fixture directory tree. Call this once assertions are done. */
   cleanup: () => void;
 };
@@ -120,6 +122,17 @@ export function runKitScript(
   writeFileSync(path.join(fakeBinDir, 'mount'), `#!/bin/sh\n${mountStub}\n`, { mode: 0o755 });
   writeFileSync(path.join(fakeBinDir, 'mountpoint'), `#!/bin/sh\n${mountpointStub}\n`, { mode: 0o755 });
 
+  // Real chown needs root, which this harness doesn't run as — faked so a
+  // script's chown *attempts* can still be asserted on, same reasoning as
+  // mount/mountpoint. Succeeds (so a bare `chown ... || true` in a script
+  // under test doesn't need its fallback to make the test pass) and still
+  // performs the real chmod-adjacent no-op of nothing, since actually
+  // changing ownership isn't needed for any assertion these tests make —
+  // only "was it called, with what args" is.
+  const chownLogPath = path.join(root, 'chown.log');
+  writeFileSync(chownLogPath, '');
+  writeFileSync(path.join(fakeBinDir, 'chown'), `#!/bin/sh\necho "$*" >> "${chownLogPath}"\n`, { mode: 0o755 });
+
   const rewrittenScript = script.split('/home/agent').join(fakeHomeAgent);
   const scriptPath = path.join(root, 'script.sh');
   writeFileSync(scriptPath, rewrittenScript, { mode: 0o755 });
@@ -139,6 +152,7 @@ export function runKitScript(
   });
 
   const mountLog = readFileSync(mountLogPath, 'utf8').split('\n').filter(Boolean);
+  const chownLog = readFileSync(chownLogPath, 'utf8').split('\n').filter(Boolean);
 
   return {
     stdout: result.stdout ?? '',
@@ -146,6 +160,7 @@ export function runKitScript(
     exitCode: result.status,
     root,
     mountLog,
+    chownLog,
     cleanup,
   };
 }
