@@ -220,6 +220,29 @@ function matchesToolPermission(entry, toolName, input) {
   return false;
 }
 
+// The chat UI renders a few fenced code block languages specially instead of
+// as plain text (src/modules/chat/transcript/Markdown.tsx) — the model has
+// no way to know that unless told, and will otherwise default to writing a
+// standalone HTML/SVG file into the repo when asked for a diagram or chart.
+// Keep this in sync with Markdown.tsx's `language === '...'` checks: it
+// describes what's actually wired up there, not every renderer that exists
+// in the codebase.
+const CHAT_RENDERING_CAPABILITIES_PROMPT =
+  'You are running inside claudecodeui\'s chat interface, which renders some fenced code blocks ' +
+  'directly in the conversation instead of as plain text:\n' +
+  '- ```mermaid fences render as an inline diagram (flowcharts, sequence diagrams, ER diagrams, etc.). ' +
+  'Body is raw Mermaid syntax.\n' +
+  '- ```vega-lite fences render as an inline chart. Body must be a complete Vega-Lite JSON spec; ' +
+  'inline any data under `data.values` rather than a `data.url`, since nothing fetches remote data for it.\n' +
+  '- ```d3 fences render as an inline D3.js visualization, sandboxed in an iframe with no network access ' +
+  'and no access to the page. Body is the statements inside `function render(container, d3, width, height) { ... }` ' +
+  '(container is an empty div to render into, width/height are its pixel size) — not a full script or an HTML document. ' +
+  'Inline any data directly in the code; it cannot fetch anything.\n' +
+  '- Standard GitHub-flavored markdown tables render as an inline, sortable/filterable table.\n' +
+  'When asked to show a diagram, graph, chart, or table, prefer one of these inline fences over writing ' +
+  'a standalone HTML file into the repo — only write a file if the user explicitly asks for one or the ' +
+  'content doesn\'t fit any of these fence types.';
+
 function mapCliOptionsToSDK(options = {}) {
   const { providerSessionId, cwd, toolsSettings, permissionMode, effort, resumeAnchorId, resumeFromScratch } = options;
 
@@ -286,7 +309,8 @@ function mapCliOptionsToSDK(options = {}) {
 
   sdkOptions.systemPrompt = {
     type: 'preset',
-    preset: 'claude_code'
+    preset: 'claude_code',
+    append: CHAT_RENDERING_CAPABILITIES_PROMPT,
   };
 
   sdkOptions.settingSources = ['project', 'user', 'local'];
