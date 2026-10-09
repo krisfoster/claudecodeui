@@ -39,6 +39,7 @@ const conversation = (
   projectDisplayName: 'project one',
   sessionTitle: `title of ${sessionId}`,
   lastActivity: '2026-08-21T09:30:00.000Z',
+  isProjectPathAvailable: true,
   ...overrides,
 });
 
@@ -158,4 +159,21 @@ test('a session needing attention gets the amber dot', () => {
   assert.equal(dots.length, 1);
   const rows = container.querySelectorAll('[data-testid="recent-conversation-row"]');
   assert.equal(rows.length, 2);
+});
+
+test('a session whose project folder is unavailable shows the warning icon, a usable one does not', () => {
+  const { container } = renderList(
+    [conversation('s1', { isProjectPathAvailable: false }), conversation('s2')],
+    makeActions(),
+  );
+
+  // lucide-react icons render as <svg>; the dimmed-title styling plus the
+  // icon's own aria-label distinguish an unavailable row from a normal one.
+  const warningIcons = container.querySelectorAll('svg[aria-label="recent.projectUnavailable"]');
+  assert.equal(warningIcons.length, 1, 'exactly the unavailable session gets the warning icon');
+
+  const rows = container.querySelectorAll('[data-testid="recent-conversation-row"]');
+  assert.equal(rows.length, 2);
+  assert.ok(rows[0].querySelector('svg[aria-label="recent.projectUnavailable"]'), 's1 (unavailable) has the icon');
+  assert.ok(!rows[1].querySelector('svg[aria-label="recent.projectUnavailable"]'), 's2 (available) does not');
 });

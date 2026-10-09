@@ -93,40 +93,66 @@ test('provider session id reports a missing app session', { concurrency: false }
 });
 
 test('recent sessions map project metadata and preserve database pagination', { concurrency: false }, async () => {
-  await withIsolatedDatabase(() => {
+  const realProjectDir = await mkdtemp(path.join(os.tmpdir(), 'sessions-service-recent-project-'));
+  try {
+    await withIsolatedDatabase(async () => {
+      sessionsDb.createSession(
+        'older-session',
+        'claude',
+        realProjectDir,
+        'Older conversation',
+        '2026-08-01T08:00:00.000Z',
+        '2026-08-01T09:00:00.000Z',
+      );
+      sessionsDb.createSession(
+        'newer-session',
+        'codex',
+        realProjectDir,
+        'Newer conversation',
+        '2026-08-01T10:00:00.000Z',
+        '2026-08-01T11:00:00.000Z',
+      );
+      projectsDb.updateCustomProjectName(realProjectDir, 'Recent Project');
+
+      const project = projectsDb.getProjectPath(realProjectDir);
+      const page = await sessionsService.listRecentSessions(1, 0);
+
+      assert.deepEqual(page, {
+        conversations: [{
+          sessionId: 'newer-session',
+          provider: 'codex',
+          projectId: project?.project_id ?? null,
+          projectDisplayName: 'Recent Project',
+          sessionTitle: 'Newer conversation',
+          lastActivity: '2026-08-01T11:00:00.000Z',
+          isProjectPathAvailable: true,
+        }],
+        total: 2,
+        hasMore: true,
+      });
+    });
+  } finally {
+    await rm(realProjectDir, { recursive: true, force: true });
+  }
+});
+
+test('a recent session whose project folder does not exist is flagged unavailable', { concurrency: false }, async () => {
+  await withIsolatedDatabase(async () => {
+    const missingProjectPath = path.join(os.tmpdir(), 'sessions-service-recent-project-missing-does-not-exist');
+
     sessionsDb.createSession(
-      'older-session',
+      'orphaned-session',
       'claude',
-      '/tmp/recent-project',
-      'Older conversation',
+      missingProjectPath,
+      'Orphaned conversation',
       '2026-08-01T08:00:00.000Z',
       '2026-08-01T09:00:00.000Z',
     );
-    sessionsDb.createSession(
-      'newer-session',
-      'codex',
-      '/tmp/recent-project',
-      'Newer conversation',
-      '2026-08-01T10:00:00.000Z',
-      '2026-08-01T11:00:00.000Z',
-    );
-    projectsDb.updateCustomProjectName('/tmp/recent-project', 'Recent Project');
 
-    const project = projectsDb.getProjectPath('/tmp/recent-project');
-    const page = sessionsService.listRecentSessions(1, 0);
+    const page = await sessionsService.listRecentSessions(10, 0);
 
-    assert.deepEqual(page, {
-      conversations: [{
-        sessionId: 'newer-session',
-        provider: 'codex',
-        projectId: project?.project_id ?? null,
-        projectDisplayName: 'Recent Project',
-        sessionTitle: 'Newer conversation',
-        lastActivity: '2026-08-01T11:00:00.000Z',
-      }],
-      total: 2,
-      hasMore: true,
-    });
+    assert.equal(page.conversations.length, 1);
+    assert.equal(page.conversations[0].isProjectPathAvailable, false);
   });
 });
 

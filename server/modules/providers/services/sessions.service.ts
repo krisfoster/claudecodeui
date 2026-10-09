@@ -59,7 +59,10 @@ type ArchivedSessionListItem = {
 type RecentSessionListItem = Pick<
   ArchivedSessionListItem,
   'sessionId' | 'provider' | 'projectId' | 'projectDisplayName' | 'sessionTitle' | 'lastActivity'
->;
+> & {
+  /** False when the session's own project path doesn't exist on this host/sandbox — opening it will fail. */
+  isProjectPathAvailable: boolean;
+};
 
 type RecentSessionsPage = {
   conversations: RecentSessionListItem[];
@@ -184,10 +187,25 @@ export const sessionsService = {
   /**
    * Returns the active conversation feed in true global activity order.
    */
-  listRecentSessions(limit: number, offset: number): RecentSessionsPage {
+  async listRecentSessions(limit: number, offset: number): Promise<RecentSessionsPage> {
     const page = sessionsDb.getRecentSessionsPage(limit, offset);
     const projectCache = new Map<string, ReturnType<typeof projectsDb.getProjectPath>>();
-    const conversations = page.sessions.map((session) => {
+    // A session imported from host history (CCUI_SBX_IMPORT_HOST_SESSIONS)
+    // carries a real project path, but that folder may never have been
+    // mounted here — opening the session then fails confusingly deep inside
+    // the agent runtime. One stat per distinct path, not per session, since
+    // many sessions typically share a project.
+    const pathAvailabilityCache = new Map<string, Promise<boolean>>();
+    const isPathAvailable = (projectPath: string): Promise<boolean> => {
+      let cached = pathAvailabilityCache.get(projectPath);
+      if (!cached) {
+        cached = fsp.stat(projectPath).then((stats) => stats.isDirectory()).catch(() => false);
+        pathAvailabilityCache.set(projectPath, cached);
+      }
+      return cached;
+    };
+
+    const conversations = await Promise.all(page.sessions.map(async (session) => {
       const projectPath = session.project_path?.trim() ? session.project_path : null;
       let project = null;
 
@@ -205,8 +223,11 @@ export const sessionsService = {
         projectDisplayName: resolveProjectDisplayName(projectPath, project?.custom_project_name),
         sessionTitle: session.custom_name?.trim() || session.session_id,
         lastActivity: session.updated_at ?? session.created_at ?? null,
+        // No path recorded is not the same claim as "this path is gone" —
+        // only a path we positively checked and couldn't find gets flagged.
+        isProjectPathAvailable: projectPath ? await isPathAvailable(projectPath) : true,
       };
-    });
+    }));
 
     return {
       conversations,

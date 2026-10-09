@@ -142,7 +142,8 @@
     "emptyDescription": "Your most recently updated conversations will appear here.",
     "loadFailed": "Could not load recent conversations",
     "loadMore": "Load older conversations",
-    "loadingMore": "Loading more..."
+    "loadingMore": "Loading more...",
+    "projectUnavailable": "This project's folder isn't available here — opening it will fail."
   },
   "deleteConfirmation": {
     "deleteProject": "Remove Project",
