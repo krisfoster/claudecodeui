@@ -1,3 +1,25 @@
+import { isValidElement } from 'react';
+import type { ReactNode } from 'react';
+
+/**
+ * Flattens a rendered markdown React tree (bold text, links, code spans,
+ * nested elements) down to its plain text — e.g. reading a table cell's
+ * comparable value for sorting/filtering, or a link's text when its href is
+ * empty. Shared by Markdown's link-text fallback and RichTable's sort/filter.
+ */
+export function childrenToText(children: ReactNode): string {
+  if (typeof children === 'string' || typeof children === 'number') {
+    return String(children);
+  }
+  if (Array.isArray(children)) {
+    return children.map(childrenToText).join('');
+  }
+  if (isValidElement(children)) {
+    return childrenToText((children.props as { children?: ReactNode }).children);
+  }
+  return '';
+}
+
 export function normalizeInlineCodeFences(text: string) {
   if (!text || typeof text !== 'string') return text;
   try {

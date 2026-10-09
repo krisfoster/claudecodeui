@@ -4,6 +4,12 @@
     "copied": "Copied",
     "copyCode": "Copy code"
   },
+  "table": {
+    "filterPlaceholder": "Filter rows…",
+    "sortPlaceholder": "Sort by…",
+    "toggleSortDirection": "Toggle sort direction",
+    "noRowsMatch": "No rows match your filter."
+  },
   "copyMessage": {
     "copy": "Copy message",
     "copied": "Message copied",
