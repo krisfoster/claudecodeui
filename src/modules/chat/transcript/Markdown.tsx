@@ -88,7 +88,11 @@ const CodeBlock = ({ node: _node, className, children, forceBlock, ...props }: C
     );
   }
 
-  const match = /language-(\w+)/.exec(className || '');
+  // `\w` doesn't include `-`, so a plain `(\w+)` truncates a hyphenated
+  // fence language (e.g. "vega-lite") at the hyphen, capturing only "vega" —
+  // which then never matches the `language === 'vega-lite'` check below and
+  // silently falls through to the generic code-block renderer instead.
+  const match = /language-([\w-]+)/.exec(className || '');
   const language = match ? match[1] : 'text';
   const languageLabel = language.charAt(0).toUpperCase() + language.slice(1);
 
