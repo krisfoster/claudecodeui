@@ -151,13 +151,20 @@ export const ToolRenderer: React.FC<ToolRendererProps> = memo(({
   // A Read of an image has nothing useful to show as the usual hidden/text
   // result — render the image itself instead, reusing the same workspace-path
   // blob-fetch + lightbox the model's own markdown image references use.
-  if (toolName === 'Read' && mode === 'result' && isImageFilePath(toolInput?.file_path)) {
-    const filePath = String(toolInput.file_path);
-    return (
-      <div className="border-l-2 border-l-border my-1 py-0.5 pl-3">
-        <MarkdownImage src={filePath} alt={filePath.split('/').pop()} />
-      </div>
-    );
+  // `toolInput` arrives JSON-stringified here (useChatMessages.ts serializes
+  // it when merging the tool_use/tool_result pair), so it has to be parsed
+  // back before `.file_path` means anything — `parsedData` above is no help
+  // in mode='result' since it's parsed from `toolResult`, not `toolInput`.
+  if (toolName === 'Read' && mode === 'result') {
+    const parsedInput = parseToolPayload(toolInput) as { file_path?: unknown } | undefined;
+    const filePath = parsedInput?.file_path;
+    if (isImageFilePath(filePath)) {
+      return (
+        <div className="border-l-2 border-l-border my-1 py-0.5 pl-3">
+          <MarkdownImage src={String(filePath)} alt={String(filePath).split('/').pop()} />
+        </div>
+      );
+    }
   }
 
   if (displayConfig.type === 'one-line') {

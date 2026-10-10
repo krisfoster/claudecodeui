@@ -1,7 +1,9 @@
 /**
  * Centralized tool configuration registry
- * Defines display behavior for all tool types 
+ * Defines display behavior for all tool types
  */
+
+import { parseToolPayload } from '@/modules/chat/utils/messageTransforms';
 
 export type ToolDisplayConfig = {
   input: {
@@ -819,8 +821,14 @@ export function shouldHideToolResult(toolName: string, toolResult: any, toolInpu
 
   // Read's result is hidden by default (the file content itself has nowhere
   // useful to render), but a Read of an image is the one case worth showing:
-  // the model can only describe the image in text otherwise.
-  if (toolName === 'Read' && isImageFilePath(toolInput?.file_path)) return false;
+  // the model can only describe the image in text otherwise. `toolInput`
+  // reaches here JSON-stringified (useChatMessages.ts merges the tool_use and
+  // tool_result WS messages and serializes the input in the process), so it
+  // has to be parsed back before `.file_path` means anything.
+  if (toolName === 'Read') {
+    const parsedInput = parseToolPayload(toolInput) as { file_path?: unknown } | undefined;
+    if (isImageFilePath(parsedInput?.file_path)) return false;
+  }
 
   // Always hidden
   if (config.result.hidden) return true;
