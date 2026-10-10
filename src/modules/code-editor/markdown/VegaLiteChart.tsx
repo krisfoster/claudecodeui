@@ -1,9 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 // Type-only: erased at build time, so it does not pull vega-embed into the main chunk.
 import type embed from 'vega-embed';
 import type { VisualizationSpec } from 'vega-embed';
 
 import { useTheme } from '@/shared/context/ThemeContext';
+import ZoomButton from '@/modules/code-editor/markdown/ZoomButton';
+import ChartZoomDialog from '@/modules/code-editor/markdown/ChartZoomDialog';
 
 // vega-embed pulls in vega + vega-lite + vega-themes, well over a megabyte
 // minified, so it is loaded on demand the first time a chart renders and
@@ -17,6 +20,12 @@ const loadVegaEmbed = () => {
 type VegaLiteChartProps = {
   /** Raw JSON source, i.e. the body of a ```vega-lite fenced block. */
   spec: string;
+  /**
+   * Whether this instance offers its own zoom button. Set to `false` for the
+   * instance mounted inside the zoomed dialog itself, so there is no
+   * zoom-inside-zoom nesting. Defaults to `true`.
+   */
+  zoomable?: boolean;
 };
 
 type RenderOutcome = { key: string; status: 'ready' | 'failed' };
@@ -31,10 +40,20 @@ type RenderOutcome = { key: string; status: 'ready' | 'failed' };
  * While vega-embed is loading, the spec doesn't parse (e.g. still streaming
  * in), or embedding fails, the raw source is shown instead, so the content
  * is never blank or replaced by an error box.
+ *
+ * Zooming mounts a second instance of this same component inside a dialog —
+ * a genuinely fresh, independent `vega-embed` view with its own event
+ * listeners, which is what keeps tooltips/interactivity working when zoomed
+ * (a CSS-scaled copy of the same rendered node could not guarantee that).
+ * vega-scenegraph's SVG clip-path/gradient ids are page-global monotonic
+ * counters, never collide between simultaneous views, so no extra isolation
+ * is needed beyond mounting a second instance.
  */
-export default function VegaLiteChart({ spec }: VegaLiteChartProps) {
+export default function VegaLiteChart({ spec, zoomable = true }: VegaLiteChartProps) {
+  const { t } = useTranslation('chat');
   const { isDarkMode } = useTheme();
   const containerRef = useRef<HTMLDivElement>(null);
+  const [expanded, setExpanded] = useState(false);
   // Keyed by what was requested so a spec/theme change reads as "pending"
   // until the new render settles, without resetting state synchronously in
   // the effect — same trick as MarkdownImage's useMarkdownImageSrc.
@@ -102,11 +121,20 @@ export default function VegaLiteChart({ spec }: VegaLiteChartProps) {
           {spec.trim()}
         </pre>
       )}
-      <div
-        ref={containerRef}
-        className={`my-3 flex justify-center overflow-x-auto rounded-xl border border-border bg-white p-4 dark:bg-zinc-900 [&_svg]:h-auto [&_svg]:max-w-full ${status === 'ready' ? '' : 'hidden'
-          }`}
-      />
+      <div className={`group relative my-3 ${status === 'ready' ? '' : 'hidden'}`}>
+        <div
+          ref={containerRef}
+          className="flex justify-center overflow-x-auto rounded-xl border border-border bg-white p-4 dark:bg-zinc-900 [&_svg]:h-auto [&_svg]:max-w-full"
+        />
+        {zoomable && status === 'ready' && (
+          <ZoomButton onClick={() => setExpanded(true)} label={t('codeBlock.zoomChart')} />
+        )}
+      </div>
+      {expanded && (
+        <ChartZoomDialog onClose={() => setExpanded(false)} label={t('codeBlock.zoomChart')}>
+          <VegaLiteChart spec={spec} zoomable={false} />
+        </ChartZoomDialog>
+      )}
     </>
   );
 }

@@ -1,8 +1,11 @@
 import { useEffect, useId, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 // Type-only: erased at build time, so it does not pull mermaid into the main chunk.
 import type mermaid from 'mermaid';
 
 import { useTheme } from '@/shared/context/ThemeContext';
+import ZoomButton from '@/modules/code-editor/markdown/ZoomButton';
+import ChartZoomDialog from '@/modules/code-editor/markdown/ChartZoomDialog';
 
 // Mermaid is ~1.5MB minified, so it is loaded on demand the first time a
 // diagram is rendered and shared by every instance afterwards.
@@ -15,6 +18,12 @@ const loadMermaid = () => {
 type MermaidDiagramProps = {
   /** Raw mermaid source, i.e. the body of a ```mermaid fenced block. */
   code: string;
+  /**
+   * Whether this instance offers its own zoom button. Set to `false` for the
+   * instance mounted inside the zoomed dialog itself, so there is no
+   * zoom-inside-zoom nesting. Defaults to `true`.
+   */
+  zoomable?: boolean;
 };
 
 /**
@@ -26,11 +35,20 @@ type MermaidDiagramProps = {
  * While mermaid is loading — or when the source doesn't parse (e.g. a block
  * that is still streaming in) — the raw source is shown instead, so the
  * content is never blank or replaced by an error box.
+ *
+ * Zooming mounts a second instance of this same component inside a dialog
+ * rather than reusing/scaling the rendered SVG node: the SVG is already
+ * resolution-independent (viewBox + max-width:100%/height:auto), so a second
+ * mount in a bigger box scales up for free, and `useId()` gives each instance
+ * its own render id, so mermaid's internal element ids (gradients, markers,
+ * etc.) never collide between the inline and zoomed copies.
  */
-export default function MermaidDiagram({ code }: MermaidDiagramProps) {
+export default function MermaidDiagram({ code, zoomable = true }: MermaidDiagramProps) {
+  const { t } = useTranslation('chat');
   const { isDarkMode } = useTheme();
   const reactId = useId();
   const [svg, setSvg] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -74,9 +92,19 @@ export default function MermaidDiagram({ code }: MermaidDiagramProps) {
   }
 
   return (
-    <div
-      className="my-3 flex justify-center overflow-x-auto rounded-xl border border-border bg-white p-4 dark:bg-zinc-900 [&_svg]:h-auto [&_svg]:max-w-full"
-      dangerouslySetInnerHTML={{ __html: svg }}
-    />
+    <div className="group relative my-3">
+      <div
+        className="flex justify-center overflow-x-auto rounded-xl border border-border bg-white p-4 dark:bg-zinc-900 [&_svg]:h-auto [&_svg]:max-w-full"
+        dangerouslySetInnerHTML={{ __html: svg }}
+      />
+      {zoomable && (
+        <ZoomButton onClick={() => setExpanded(true)} label={t('codeBlock.zoomDiagram')} />
+      )}
+      {expanded && (
+        <ChartZoomDialog onClose={() => setExpanded(false)} label={t('codeBlock.zoomDiagram')}>
+          <MermaidDiagram code={code} zoomable={false} />
+        </ChartZoomDialog>
+      )}
+    </div>
   );
 }

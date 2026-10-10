@@ -2,7 +2,10 @@
   "codeBlock": {
     "copy": "Copy",
     "copied": "Copied",
-    "copyCode": "Copy code"
+    "copyCode": "Copy code",
+    "zoomDiagram": "Zoom diagram",
+    "zoomChart": "Zoom chart",
+    "zoomVisualization": "Zoom visualization"
   },
   "table": {
     "filterPlaceholder": "Filter rows…",
