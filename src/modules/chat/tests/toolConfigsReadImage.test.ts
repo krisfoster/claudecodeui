@@ -45,3 +45,27 @@ test('a Read with no input (defensive) keeps the default hidden behavior', () =>
   const hidden = shouldHideToolResult('Read', { content: 'file contents' }, undefined);
   assert.equal(hidden, true);
 });
+
+// useChatMessages.ts merges a tool_use WS message with its later tool_result
+// into one ChatMessage, JSON-stringifying the input in the process — this is
+// the real shape `message.toolInput` has by the time it reaches
+// shouldHideToolResult/ToolRenderer, not a plain object. A bug here (reading
+// `.file_path` off the string without parsing) shipped silently because the
+// original tests passed an object directly, masking it.
+test('a Read of an image is not hidden even when toolInput arrives JSON-stringified', () => {
+  const hidden = shouldHideToolResult(
+    'Read',
+    { content: '' },
+    JSON.stringify({ file_path: '/repo/assets/logo.png' }),
+  );
+  assert.equal(hidden, false);
+});
+
+test('a Read of a text file stays hidden when toolInput arrives JSON-stringified', () => {
+  const hidden = shouldHideToolResult(
+    'Read',
+    { content: 'file contents' },
+    JSON.stringify({ file_path: '/repo/README.md' }),
+  );
+  assert.equal(hidden, true);
+});
