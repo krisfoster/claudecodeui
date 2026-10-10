@@ -39,7 +39,11 @@ export default function MarkdownCodeBlock({
     );
   }
 
-  const languageMatch = /language-(\w+)/.exec(className || '');
+  // `\w` doesn't include `-`, so a plain `(\w+)` truncates a hyphenated
+  // fence language (e.g. "vega-lite") at the hyphen, capturing only "vega" —
+  // which then never matches the `language === 'vega-lite'` check below and
+  // silently falls through to the generic code-block renderer instead.
+  const languageMatch = /language-([\w-]+)/.exec(className || '');
   const language = languageMatch ? languageMatch[1] : 'text';
 
   if (language === 'mermaid') {
