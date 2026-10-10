@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 
-import { render, waitFor } from '@testing-library/react';
+import { act, render, fireEvent, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, test, vi } from 'vitest';
 
 import D3Sandbox from '@/modules/code-editor/markdown/D3Sandbox';
@@ -21,18 +21,82 @@ vi.mock('@/shared/context/ThemeContext', () => ({
   useTheme: () => ({ isDarkMode: false, toggleDarkMode: () => undefined }),
 }));
 
+// This file mounts real sandboxed iframes and drives them with genuine
+// postMessage round-trips, which — purely from event-loop/CPU contention,
+// not a logic issue — can occasionally take several real seconds to settle
+// when the *entire* repo test suite (600+ tests across 90+ files) runs
+// concurrently on a single machine. Vitest's 5000ms per-test default is
+// tight enough that it can fire before the (correct) state change lands in
+// that scenario; this file alone or in small groups settles in milliseconds.
+vi.setConfig({ testTimeout: 15000 });
+
+// Wrapped in `act` because this is a plain `dispatchEvent`, not something
+// Testing Library instruments itself (unlike `fireEvent`) — without it, the
+// state update the message handler triggers can flush at a nondeterministic
+// point relative to the rest of the test instead of synchronously here,
+// which is what produced the flaky/occasionally-hanging escape and height
+// assertions below during development of this suite.
 const postFromIframe = (iframe: HTMLIFrameElement, data: unknown) => {
-  window.dispatchEvent(new MessageEvent('message', { data, source: iframe.contentWindow }));
+  act(() => {
+    window.dispatchEvent(new MessageEvent('message', { data, source: iframe.contentWindow }));
+  });
+};
+
+// A plain, self-contained poll (no testing-library `waitFor`/MutationObserver
+// involved) for the handful of assertions in this file that, empirically,
+// can still take a moment to settle when the whole repo's test suite runs
+// at once (hundreds of files contending for the CPU) even though `act`
+// normally flushes a dispatchEvent-triggered state update synchronously.
+// Generous ceiling (under the file's bumped testTimeout above): this only
+// matters under that kind of extreme, CI-style concurrent load — a lone
+// file or a small subset settles in single-digit milliseconds, well under
+// this.
+const waitForCondition = async (check: () => boolean, label: string): Promise<void> => {
+  const deadline = Date.now() + 10000;
+  while (!check()) {
+    if (Date.now() > deadline) {
+      throw new Error(`waitForCondition timed out: ${label}`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
 };
 
 // `waitFor`'s callback only retries when it throws — returning a bare
 // `null` resolves immediately on the first (too-early) check.
+//
+// Scoped to `container` and assumes exactly one iframe — true for every
+// test below that never opens the zoom dialog. Once zoom is involved, a
+// second iframe exists simultaneously (the zoomed copy, portaled into
+// `document.body` by Dialog, outside `container` entirely) — use
+// `waitForIframeCount`/`getIframes` instead so a test can't silently grab
+// the wrong one via a singular `querySelector`.
+// A generous timeout on both of these: under the full repo-wide test suite's
+// concurrent load, settling can take meaningfully longer wall-clock time
+// than testing-library's 1000ms default despite nothing actually being wrong
+// — a lone file or small subset settles in single-digit milliseconds.
 const waitForIframe = (container: HTMLElement) =>
   waitFor(() => {
     const found = container.querySelector('iframe');
     assert.ok(found, 'expected an iframe once the snippet compiles');
     return found as HTMLIFrameElement;
-  });
+  }, { timeout: 10000 });
+
+// Dialog portals its content into `document.body`, not into `render()`'s own
+// container, so a zoomed copy's iframe has to be found document-wide.
+const getIframes = (): HTMLIFrameElement[] => Array.from(document.querySelectorAll('iframe'));
+
+const waitForIframeCount = (count: number) =>
+  waitFor(() => {
+    const found = getIframes();
+    assert.equal(found.length, count, `expected ${count} iframe(s), found ${found.length}`);
+    return found;
+  }, { timeout: 10000 });
+
+// Posts d3-resize and reveals the zoom button.
+const revealButtonFor = async (iframe: HTMLIFrameElement, height = 100): Promise<void> => {
+  postFromIframe(iframe, { type: 'd3-resize', height });
+  await waitForCondition(() => !iframe.classList.contains('hidden'), 'iframe to stop being hidden');
+};
 
 beforeEach(() => {
   vi.useRealTimers();
@@ -45,7 +109,7 @@ afterEach(() => {
 test('a syntactically invalid snippet never creates an iframe and shows raw source', async () => {
   const { container, getByText } = render(<D3Sandbox code="function( { not valid" />);
 
-  await waitFor(() => assert.ok(getByText('function( { not valid')));
+  await waitFor(() => assert.ok(getByText('function( { not valid')), { timeout: 10000 });
   assert.equal(container.querySelector('iframe'), null);
 });
 
@@ -90,7 +154,7 @@ test('a d3-resize message from the sandbox reveals the chart and hides the raw s
 
   postFromIframe(iframe, { type: 'd3-resize', height: 200 });
 
-  await waitFor(() => assert.equal(iframe.classList.contains('hidden'), false));
+  await waitForCondition(() => !iframe.classList.contains('hidden'), 'iframe to stop being hidden');
   assert.equal(queryByText("container.textContent = 'chart';"), null);
 });
 
@@ -141,7 +205,7 @@ test('rapid successive code changes tear down the stale listener instead of lett
   assert.ok(iframeB.classList.contains('hidden'));
 
   postFromIframe(iframeB, { type: 'd3-resize', height: 1 });
-  await waitFor(() => assert.equal(iframeB.classList.contains('hidden'), false));
+  await waitForCondition(() => !iframeB.classList.contains('hidden'), 'iframeB to stop being hidden');
   assert.equal(queryByText(codeA), null);
   assert.equal(queryByText(codeB), null);
 });
@@ -154,9 +218,102 @@ test('a message from a different source is ignored', async () => {
 
   // Not `source: iframe.contentWindow` — an unrelated frame trying to spoof
   // a ready signal must not be able to flip this component's state.
-  window.dispatchEvent(new MessageEvent('message', { data: { type: 'd3-resize', height: 1 }, source: null }));
+  act(() => {
+    window.dispatchEvent(new MessageEvent('message', { data: { type: 'd3-resize', height: 1 }, source: null }));
+  });
 
-  await new Promise((resolve) => setTimeout(resolve, 10));
   assert.ok(queryByText(code));
   assert.ok(iframe.classList.contains('hidden'));
+});
+
+test("a d3-resize message sets the iframe's actual height (previously dead data)", async () => {
+  const { container } = render(<D3Sandbox code="container.textContent = 'chart';" />);
+
+  const iframe = await waitForIframe(container);
+  assert.equal(iframe.style.height, '');
+
+  postFromIframe(iframe, { type: 'd3-resize', height: 742 });
+
+  await waitForCondition(() => iframe.style.height === '742px', 'iframe height to be set from d3-resize');
+});
+
+test('the zoom button only appears once the visualization has rendered', async () => {
+  const { container, queryByRole } = render(<D3Sandbox code="container.textContent = 'chart';" />);
+
+  const iframe = await waitForIframe(container);
+  assert.equal(queryByRole('button'), null);
+
+  await revealButtonFor(iframe);
+
+  assert.ok(queryByRole('button'));
+});
+
+test('clicking the zoom button opens a dialog with a second, independently-sized iframe', async () => {
+  const { container, getByRole } = render(<D3Sandbox code="container.textContent = 'chart';" />);
+
+  const inlineIframe = await waitForIframe(container);
+  await revealButtonFor(inlineIframe);
+
+  fireEvent.click(getByRole('button'));
+
+  await waitFor(() => assert.ok(document.querySelector('[role="dialog"]')), { timeout: 10000 });
+  await waitForIframeCount(2);
+});
+
+test("the zoomed copy's postMessage is handled independently of the inline one", async () => {
+  const { container, getByRole } = render(<D3Sandbox code="container.textContent = 'chart';" />);
+
+  const inlineIframe = await waitForIframe(container);
+  await revealButtonFor(inlineIframe, 100);
+
+  fireEvent.click(getByRole('button'));
+
+  const [, zoomedIframe] = await waitForIframeCount(2);
+  // Fresh mount: the zoomed copy starts pending again (hidden), independent
+  // of the already-ready inline one.
+  assert.ok(zoomedIframe.classList.contains('hidden'));
+
+  postFromIframe(zoomedIframe, { type: 'd3-resize', height: 500 });
+
+  await waitForCondition(() => !zoomedIframe.classList.contains('hidden'), 'zoomedIframe to stop being hidden');
+  // The inline iframe's own height from its earlier, separate resize is untouched.
+  assert.equal(inlineIframe.style.height, '100px');
+  assert.equal(zoomedIframe.style.height, '500px');
+});
+
+test('Escape posted from inside the sandboxed iframe closes the zoomed dialog', async () => {
+  // Regression for review finding #4: the zoomed iframe is a genuinely
+  // separate document, so a keydown inside it never reaches the parent
+  // document's own Escape listener — it has to be relayed via postMessage.
+  const { container, getByRole } = render(<D3Sandbox code="container.textContent = 'chart';" />);
+
+  const inlineIframe = await waitForIframe(container);
+  await revealButtonFor(inlineIframe);
+
+  fireEvent.click(getByRole('button'));
+
+  const [, zoomedIframe] = await waitForIframeCount(2);
+  assert.ok(document.querySelector('[role="dialog"]'));
+
+  postFromIframe(zoomedIframe, { type: 'd3-escape' });
+
+  await waitFor(() => assert.equal(document.querySelector('[role="dialog"]'), null), { timeout: 10000 });
+  // Closing removes the zoomed copy; the inline one stays mounted.
+  await waitForIframeCount(1);
+});
+
+test('an escape message from a different source does not close the dialog', async () => {
+  const { container, getByRole } = render(<D3Sandbox code="container.textContent = 'chart';" />);
+
+  const inlineIframe = await waitForIframe(container);
+  await revealButtonFor(inlineIframe);
+
+  fireEvent.click(getByRole('button'));
+  await waitForIframeCount(2);
+
+  act(() => {
+    window.dispatchEvent(new MessageEvent('message', { data: { type: 'd3-escape' }, source: null }));
+  });
+
+  assert.ok(document.querySelector('[role="dialog"]'));
 });

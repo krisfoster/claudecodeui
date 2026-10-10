@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 
 import { useTheme } from '@/shared/context/ThemeContext';
+import ZoomButton from '@/modules/code-editor/markdown/ZoomButton';
+import ChartZoomDialog from '@/modules/code-editor/markdown/ChartZoomDialog';
 
 // Lazy-loaded as raw text (Vite's `?raw` suffix), not executed here — the
 // bundle is inlined into a sandboxed iframe's srcdoc, never imported into
@@ -20,6 +23,20 @@ const loadD3Source = () => {
 type D3SandboxProps = {
   /** Raw JS source, i.e. the body of a ```d3 fenced block. */
   code: string;
+  /**
+   * Whether this instance offers its own zoom button. Set to `false` for the
+   * instance mounted inside the zoomed dialog itself, so there is no
+   * zoom-inside-zoom nesting. Defaults to `true`.
+   */
+  zoomable?: boolean;
+  /**
+   * Called when the sandboxed iframe reports an Escape keypress. The iframe
+   * is a genuinely separate document (`sandbox="allow-scripts"`, no
+   * `allow-same-origin`), so a keydown while focus/interaction is inside it
+   * never reaches a parent-document Escape listener — only meaningful (and
+   * only passed) for the zoomed copy, to close its dialog.
+   */
+  onEscape?: () => void;
 };
 
 type SrcDocState = { key: string; srcDoc: string };
@@ -47,9 +64,11 @@ const RENDER_TIMEOUT_MS = 5000;
  * a render that never reports back within a few seconds all fall back to
  * the raw source — same philosophy as MermaidDiagram and VegaLiteChart.
  */
-export default function D3Sandbox({ code }: D3SandboxProps) {
+export default function D3Sandbox({ code, zoomable = true, onEscape }: D3SandboxProps) {
+  const { t } = useTranslation('chat');
   const { isDarkMode } = useTheme();
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  const [expanded, setExpanded] = useState(false);
   const key = `${code}::${isDarkMode}`;
 
   // A syntax error is pure and synchronous, so it is derived at render time
@@ -113,13 +132,26 @@ export default function D3Sandbox({ code }: D3SandboxProps) {
     }, RENDER_TIMEOUT_MS);
 
     const handleMessage = (event: MessageEvent) => {
-      if (settled || event.source !== iframeRef.current?.contentWindow) {
+      if (event.source !== iframeRef.current?.contentWindow) {
         return;
       }
-      const data = event.data as { type?: string } | undefined;
+      const data = event.data as { type?: string; height?: number } | undefined;
+      // Escape can arrive at any point after the sandbox loads, independent
+      // of whether the render has already settled, so it bypasses the
+      // `settled` gate below (which only governs the one-shot render outcome).
+      if (data?.type === 'd3-escape') {
+        onEscape?.();
+        return;
+      }
+      if (settled) {
+        return;
+      }
       if (data?.type === 'd3-resize') {
         settled = true;
         window.clearTimeout(timeoutId);
+        if (iframeRef.current && typeof data.height === 'number') {
+          iframeRef.current.style.height = `${data.height}px`;
+        }
         setOutcome({ key, status: 'ready' });
       } else if (data?.type === 'd3-error') {
         settled = true;
@@ -133,7 +165,7 @@ export default function D3Sandbox({ code }: D3SandboxProps) {
       window.clearTimeout(timeoutId);
       window.removeEventListener('message', handleMessage);
     };
-  }, [srcDoc, key]);
+  }, [srcDoc, key, onEscape]);
 
   return (
     <>
@@ -142,15 +174,34 @@ export default function D3Sandbox({ code }: D3SandboxProps) {
           {code.trim()}
         </pre>
       )}
+      {/*
+        `h-full` on both the wrapper below and the iframe inside it is a
+        no-op inline (a percentage height with no definite-height ancestor
+        resolves to `auto`), but becomes real once the zoomed copy is mounted
+        inside ChartZoomDialog's `flex h-[...] flex-col` chain, which gives
+        it a definite height to resolve against — flex items are the
+        specific CSS exception that lets percentage heights work without
+        every intermediate ancestor opting in explicitly.
+      */}
       {srcDoc !== null && (
-        <iframe
-          ref={iframeRef}
-          srcDoc={srcDoc}
-          sandbox="allow-scripts"
-          title="D3 visualization"
-          className={`my-3 w-full overflow-hidden rounded-xl border border-border bg-white dark:bg-zinc-900 ${status === 'ready' ? '' : 'hidden'
-            }`}
-        />
+        <div className="group relative my-3 h-full">
+          <iframe
+            ref={iframeRef}
+            srcDoc={srcDoc}
+            sandbox="allow-scripts"
+            title="D3 visualization"
+            className={`h-full w-full overflow-hidden rounded-xl border border-border bg-white dark:bg-zinc-900 ${status === 'ready' ? '' : 'hidden'
+              }`}
+          />
+          {zoomable && status === 'ready' && (
+            <ZoomButton onClick={() => setExpanded(true)} label={t('codeBlock.zoomVisualization')} />
+          )}
+        </div>
+      )}
+      {expanded && (
+        <ChartZoomDialog onClose={() => setExpanded(false)} label={t('codeBlock.zoomVisualization')}>
+          <D3Sandbox code={code} zoomable={false} onEscape={() => setExpanded(false)} />
+        </ChartZoomDialog>
       )}
     </>
   );
@@ -174,7 +225,7 @@ function buildSrcDoc(code: string, d3Source: string, isDarkMode: boolean): strin
 <head>
 <meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval'; style-src 'unsafe-inline'; connect-src 'none'; img-src data:; navigate-to 'none'">
-<style>html,body{margin:0;padding:0;background:${background};overflow:hidden}#root{width:100%}</style>
+<style>html,body{margin:0;padding:0;height:100%;background:${background};overflow:hidden}#root{width:100%;height:100%}</style>
 </head>
 <body>
 <div id="root"></div>
@@ -191,6 +242,15 @@ function buildSrcDoc(code: string, d3Source: string, isDarkMode: boolean): strin
   window.addEventListener('unhandledrejection', function (event) {
     var reason = event.reason;
     post({ type: 'd3-error', message: reason && reason.message ? reason.message : String(reason) });
+  });
+  // This is a genuinely separate document — a keydown here never reaches a
+  // parent-document Escape listener — so Escape is relayed explicitly. Only
+  // meaningful when this is the zoomed copy (D3Sandbox's onEscape prop),
+  // harmless no-op otherwise.
+  window.addEventListener('keydown', function (event) {
+    if (event.key === 'Escape') {
+      post({ type: 'd3-escape' });
+    }
   });
   try {
     var container = document.getElementById('root');

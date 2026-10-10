@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 
-import { render, waitFor } from '@testing-library/react';
+import { render, fireEvent, waitFor } from '@testing-library/react';
 import { beforeEach, test, vi } from 'vitest';
 
 import VegaLiteChart from '@/modules/code-editor/markdown/VegaLiteChart';
@@ -18,13 +18,15 @@ vi.mock('vega-embed', () => ({
   default: (...args: unknown[]) => embedMock(...args),
 }));
 
+let mockIsDarkMode = false;
 vi.mock('@/shared/context/ThemeContext', () => ({
-  useTheme: () => ({ isDarkMode: false, toggleDarkMode: () => undefined }),
+  useTheme: () => ({ isDarkMode: mockIsDarkMode, toggleDarkMode: () => undefined }),
 }));
 
 beforeEach(() => {
   embedMock.mockReset();
   finalizeMock.mockReset();
+  mockIsDarkMode = false;
   embedMock.mockResolvedValue({
     view: {},
     spec: {},
@@ -67,4 +69,72 @@ test('a successful embed hides the raw source and shows the chart container', as
   await waitFor(() => assert.equal(embedMock.mock.calls.length, 1));
   await waitFor(() => assert.equal(queryByText(/mark/), null));
   assert.equal(container.querySelector('pre'), null);
+});
+
+test('the zoom button only appears once the chart has embedded', async () => {
+  let resolveEmbed: (value: unknown) => void = () => {};
+  embedMock.mockReturnValue(new Promise((resolve) => { resolveEmbed = resolve; }));
+
+  const { queryByRole, findByRole } = render(<VegaLiteChart spec={JSON.stringify({ mark: 'bar' })} />);
+
+  assert.equal(queryByRole('button'), null);
+
+  resolveEmbed({ view: {}, spec: {}, vgSpec: {}, embedOptions: {}, finalize: finalizeMock });
+  await findByRole('button');
+});
+
+test('clicking the zoom button opens a dialog with a second, independent embed — interactivity preserved', async () => {
+  const { getByRole, findByRole } = render(<VegaLiteChart spec={JSON.stringify({ mark: 'bar' })} />);
+
+  const zoomButton = await findByRole('button');
+  fireEvent.click(zoomButton);
+
+  await waitFor(() => assert.ok(getByRole('dialog')));
+  // A second, genuinely live vega-embed call — not a CSS-scaled copy of the
+  // same rendered node — is what keeps tooltips/interactivity working once
+  // zoomed, per the explicit requirement this feature was built around.
+  await waitFor(() => assert.equal(embedMock.mock.calls.length, 2));
+});
+
+test('closing the dialog finalizes the zoomed view (and leaves the inline one running)', async () => {
+  const { findByRole, queryByRole } = render(<VegaLiteChart spec={JSON.stringify({ mark: 'bar' })} />);
+
+  const zoomButton = await findByRole('button');
+  fireEvent.click(zoomButton);
+  await waitFor(() => assert.equal(embedMock.mock.calls.length, 2));
+  await waitFor(() => assert.equal(finalizeMock.mock.calls.length, 0));
+
+  fireEvent.keyDown(document, { key: 'Escape' });
+
+  await waitFor(() => assert.equal(queryByRole('dialog'), null));
+  // Only the zoomed copy's view is torn down; the inline one keeps running.
+  await waitFor(() => assert.equal(finalizeMock.mock.calls.length, 1));
+});
+
+test('unmounting the parent while zoomed finalizes both the inline and zoomed views', async () => {
+  const { findByRole, unmount } = render(<VegaLiteChart spec={JSON.stringify({ mark: 'bar' })} />);
+
+  const zoomButton = await findByRole('button');
+  fireEvent.click(zoomButton);
+  await waitFor(() => assert.equal(embedMock.mock.calls.length, 2));
+
+  unmount();
+
+  assert.equal(finalizeMock.mock.calls.length, 2);
+});
+
+test('toggling theme while zoomed re-embeds both the inline and zoomed views', async () => {
+  const spec = JSON.stringify({ mark: 'bar' });
+  const { findByRole, rerender } = render(<VegaLiteChart spec={spec} />);
+
+  const zoomButton = await findByRole('button');
+  fireEvent.click(zoomButton);
+  await waitFor(() => assert.equal(embedMock.mock.calls.length, 2));
+
+  mockIsDarkMode = true;
+  rerender(<VegaLiteChart spec={spec} />);
+
+  await waitFor(() => assert.equal(embedMock.mock.calls.length, 4));
+  const lastCallOpts = embedMock.mock.calls[3][2] as { theme?: string };
+  assert.equal(lastCallOpts.theme, 'dark');
 });
